@@ -133,6 +133,80 @@ load(
     "releases",
 )
 
+def _write_zig_wrapper(ctx: AnalysisContext, name: str, zig_artifact: Artifact, zig_run_info: RunInfo, subcmd: str) -> cmd_args:
+    """Write a zig wrapper script that resolves paths from its own location.
+
+    Uses BASH_SOURCE to calculate the script's directory, then constructs
+    paths relative to that location. This ensures the script works regardless
+    of the caller's working directory - go_go_wrapper changes to a temporary
+    directory which breaks scripts using relative paths.
+
+    Also expands nested @argsfile references since zig cc doesn't support them.
+
+    Sets ZIG_LOCAL_CACHE_DIR and ZIG_GLOBAL_CACHE_DIR to BUCK_SCRATCH_PATH
+    for RE compatibility (remote workers may not have writable $HOME).
+
+    IMPORTANT: Includes the distribution's RunInfo.args as hidden deps.
+    This preserves the toolchain directory dependency from hermetic toolchains.
+    """
+    script = ctx.actions.declare_output(name)
+    ctx.actions.write(
+        script,
+        [
+            "#!/usr/bin/env bash",
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+            # Set zig cache directories for RE compatibility - BUCK_SCRATCH_PATH is always available
+            'export ZIG_LOCAL_CACHE_DIR="$BUCK_SCRATCH_PATH/.zig-cache"',
+            'export ZIG_GLOBAL_CACHE_DIR="$BUCK_SCRATCH_PATH/.zig-cache"',
+            # Expand nested @argsfile references - zig cc doesn't support them
+            # Write expanded args to a temp file to handle shell quoting correctly
+            'expand_argsfile() {',
+            '  local file="$1"',
+            '  while IFS= read -r line || [[ -n "$line" ]]; do',
+            '    if [[ "$line" == @* ]]; then',
+            '      expand_argsfile "${line:1}"',
+            '    else',
+            '      echo "$line"',
+            '    fi',
+            '  done < "$file"',
+            '}',
+            'args=()',
+            'argfile_n=0',
+            'for arg in "$@"; do',
+            '  if [[ "$arg" == @* ]]; then',
+            '    file="${arg:1}"',
+            '    if [[ -f "$file" ]]; then',
+            '      tmpfile="$BUCK_SCRATCH_PATH/argsfile_$argfile_n"',
+            '      argfile_n=$((argfile_n + 1))',
+            '      expand_argsfile "$file" > "$tmpfile"',
+            '      args+=("@$tmpfile")',
+            '    else',
+            '      args+=("$arg")',
+            '    fi',
+            '  else',
+            '    args+=("$arg")',
+            '  fi',
+            'done',
+            # UPSTREAM: zig's linker (lld) cannot read thin archives created by zig ar.
+            # Strip the T flag from ar operations so only regular archives are created.
+            'if [[ "' + subcmd + '" == "ar" && ${#args[@]} -gt 0 ]]; then args[0]="${args[0]//T/}"; fi',
+            cmd_args(
+                'exec "$SCRIPT_DIR/',
+                cmd_args(zig_artifact, relative_to = (script, 1)),
+                '" ',
+                subcmd,
+                ' "${args[@]}"',
+                delimiter = "",
+            ),
+        ],
+        is_executable = True,
+        allow_args = True,
+    )
+    # Include zig_artifact and zig_run_info.args as hidden deps
+    # This ensures the full toolchain directory is materialized when using
+    # hermetic toolchains that bundle the zig binary with RunInfo hidden deps
+    return cmd_args(script, hidden = [zig_artifact, zig_run_info.args])
+
 ZigReleaseInfo = provider(
     # @unsorted-dict-items
     fields = {
@@ -326,31 +400,45 @@ def _get_linker_type(os: str) -> LinkerType:
 def _cxx_zig_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     dist = ctx.attrs.distribution[ZigDistributionInfo]
     zig = ctx.attrs.distribution[RunInfo]
+    zig_artifact = ctx.attrs.distribution[DefaultInfo].default_outputs[0]
     target = ["-target", ctx.attrs.target] if ctx.attrs.target else []
-    zig_cc = cmd_script(
-        actions = ctx.actions,
-        name = "zig_cc",
-        cmd = cmd_args(zig, "cc"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
-    zig_cxx = cmd_script(
-        actions = ctx.actions,
-        name = "zig_cxx",
-        cmd = cmd_args(zig, "c++"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
-    zig_ar = cmd_script(
-        actions = ctx.actions,
-        name = "zig_ar",
-        cmd = cmd_args(zig, "ar"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
-    zig_ranlib = cmd_script(
-        actions = ctx.actions,
-        name = "zig_ranlib",
-        cmd = cmd_args(zig, "ranlib"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
+
+    # On Unix, use BASH_SOURCE-based wrapper scripts that resolve paths
+    # relative to the script's location. This ensures they work when invoked
+    # from different working directories (go_go_wrapper changes to a temp dir).
+    if dist.os == "windows":
+        zig_cc = cmd_script(
+            actions = ctx.actions,
+            name = "zig_cc",
+            cmd = cmd_args(zig, "cc"),
+            language = ScriptLanguage("bat"),
+        )
+        zig_cxx = cmd_script(
+            actions = ctx.actions,
+            name = "zig_cxx",
+            cmd = cmd_args(zig, "c++"),
+            language = ScriptLanguage("bat"),
+        )
+        zig_ar = cmd_script(
+            actions = ctx.actions,
+            name = "zig_ar",
+            cmd = cmd_args(zig, "ar"),
+            language = ScriptLanguage("bat"),
+        )
+        zig_ranlib = cmd_script(
+            actions = ctx.actions,
+            name = "zig_ranlib",
+            cmd = cmd_args(zig, "ranlib"),
+            language = ScriptLanguage("bat"),
+        )
+    else:
+        # Named "cc" and "c++" so libtool can infer the compiler tag from
+        # the basename. Libtool matches against known names like cc/gcc/clang
+        # to determine whether it's compiling C or C++.
+        zig_cc = _write_zig_wrapper(ctx, "cc", zig_artifact, zig, "cc")
+        zig_cxx = _write_zig_wrapper(ctx, "c++", zig_artifact, zig, "c++")
+        zig_ar = _write_zig_wrapper(ctx, "ar", zig_artifact, zig, "ar")
+        zig_ranlib = _write_zig_wrapper(ctx, "ranlib", zig_artifact, zig, "ranlib")
     return [ctx.attrs.distribution[DefaultInfo]] + cxx_toolchain_infos(
         internal_tools = ctx.attrs._cxx_internal_tools[CxxInternalTools],
         platform_name = dist.arch,
