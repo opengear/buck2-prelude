@@ -427,7 +427,7 @@ def process_genrule(
         prefer_local = prefer_local,
         weight = value_or(ctx.attrs.weight, 1),
         allow_cache_upload = cacheable,
-        allow_offline_output_cache = ctx.attrs.allow_offline_output_cache,
+
         category = category,
         identifier = identifier,
         no_outputs_cleanup = ctx.attrs.no_outputs_cleanup,

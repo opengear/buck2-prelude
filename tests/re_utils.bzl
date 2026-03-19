@@ -113,7 +113,7 @@ def get_re_executors_from_props(ctx: AnalysisContext, dynamic_image_override: [d
         remote_execution_use_case = use_case or "tpx-default",
         remote_cache_enabled = remote_cache_enabled,
         remote_execution_dependencies = re_dependencies,
-        remote_execution_gang_workers = re_gang_workers,
+
         remote_execution_resource_units = re_resource_units,
         remote_execution_dynamic_image = re_dynamic_image,
         meta_internal_extra_params = meta_internal_extra_params,
