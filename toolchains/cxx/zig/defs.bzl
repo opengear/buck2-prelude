@@ -403,6 +403,13 @@ def _cxx_zig_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     zig_artifact = ctx.attrs.distribution[DefaultInfo].default_outputs[0]
     target = ["-target", ctx.attrs.target] if ctx.attrs.target else []
 
+    # Zig's musl libc lacks the ubsan runtime (__ubsan_handle_* symbols).
+    # Disable sanitizers at the toolchain level so all musl consumers link cleanly.
+    # NOTE: Do NOT add musl-specific flags (like -fno-sanitize=undefined) to compiler_flags.
+    # compiler_flags flow into CC via configure_make, changing action digests and invalidating
+    # configure caches. The ubsan fix belongs at the Go toolchain level (cxx_compiler_flags)
+    # where it only affects CGO compilation, not autotools configure.
+
     # On Unix, use BASH_SOURCE-based wrapper scripts that resolve paths
     # relative to the script's location. This ensures they work when invoked
     # from different working directories (go_go_wrapper changes to a temp dir).
@@ -442,6 +449,12 @@ def _cxx_zig_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     return [ctx.attrs.distribution[DefaultInfo]] + cxx_toolchain_infos(
         internal_tools = ctx.attrs._cxx_internal_tools[CxxInternalTools],
         platform_name = dist.arch,
+        as_compiler_info = CCompilerInfo(
+            compiler = RunInfo(args = cmd_args(zig_cc)),
+            compiler_type = "clang",
+            compiler_flags = cmd_args(target),
+            preprocessor_flags = cmd_args(),
+        ),
         c_compiler_info = CCompilerInfo(
             compiler = RunInfo(args = cmd_args(zig_cc)),
             compiler_type = "clang",
