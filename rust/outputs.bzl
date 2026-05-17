@@ -73,3 +73,47 @@ RustcExtraOutputsInfo = provider(
         "remarks": RustcOutput | None,
     },
 )
+
+# The persisted doctest source tree plus the reusable rustdoc/rustc compile
+# context that produced it. rustdoc sets the layout inside `source_dir`, and
+# that layout changes with the rustdoc version and the edition. The provider's
+# contract covers the directory and the compile context.
+RustDoctestSourceInfo = provider(
+    # @unsorted-dict-items
+    fields = {
+        # Directory output of `rustdoc --test --no-run --persist-doctests`.
+        "source_dir": Artifact,
+        # The library's own `.rlib`. The persist step built the generated
+        # doctest bundle against it. A consumer puts its directory on
+        # `-Ldependency` so rustc resolves the bundle's dependency on the
+        # library by its strict version hash (SVH).
+        "crate_rlib": Artifact,
+        # The library's own `--extern=<name>=<lib>` in the prelude's extern
+        # wire format, which includes dynamic crate names. The persist compile
+        # built the generated bundle against this binding. A consumer compiling
+        # the generated doctest source passes it to rustc unchanged.
+        "crate_extern_args": cmd_args,
+        # rustc args reusable for compiling generated doctest sources: target,
+        # edition, cfgs, externs, sysroot, linker, remap, and hidden inputs. It
+        # leaves out the crate root, `--crate-name`, and `--crate-type`; the
+        # consumer sets those for the generated crate.
+        "compile_context_args": cmd_args,
+        # The doctest env encoded as `rustc_action.py` `--env=`/`--path-env=`
+        # wrapper flags, including `RUSTC_BOOTSTRAP=1`. A consumer passes it
+        # unchanged to `rustc_action`.
+        "env_args": cmd_args,
+        # The clippy-driver wrapper that the library's own clippy compile runs.
+        # The wrapper itself puts clippy-driver in clippy mode.
+        "clippy_wrapper": cmd_args,
+        # The toolchain's lint flags as the library's own clippy compile
+        # passes them, with `deny_on_check_lints` as `-D`. A consumer passes
+        # them before the compile context. A target's `rustc_flags` then
+        # override them, as they do in that compile.
+        "clippy_lint_flags": cmd_args,
+        # The environment the library's own clippy compile gives clippy-driver.
+        # It holds a `CLIPPY_CONF_DIR` entry when the library's
+        # `clippy_configuration` or the toolchain sets a `clippy.toml`, and is
+        # empty otherwise.
+        "clippy_env": dict[str, Artifact],
+    },
+)

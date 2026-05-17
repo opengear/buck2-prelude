@@ -87,6 +87,13 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.python_bootstrap_binary(
+    name = "ensure_output_dir",
+    has_content_based_path = True,
+    main = "ensure_output_dir.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "symlink_only_dir_entry",
     has_content_based_path = True,
     main = "symlink_only_dir_entry.py",
@@ -135,6 +142,7 @@ prelude.python_library(
     srcs = [
         "buildscript_run.py",
         "cd_run.py",
+        "ensure_output_dir.py",
         "extract_link_action.py",
         "failure_filter_action.py",
         "redirect_stdout.py",

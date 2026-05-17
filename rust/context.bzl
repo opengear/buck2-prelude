@@ -39,6 +39,7 @@ load(
 # (rustdoc just relays bunch of the same args to rustc when trying to gen docs)
 CommonArgsInfo = record(
     args = field(cmd_args),
+    reusable_args = field(cmd_args),
     subdir = field(str),
     tempfile = field(str),
     crate_type = field(CrateType),
