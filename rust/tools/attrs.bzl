@@ -15,6 +15,7 @@ def _internal_tool(default: str) -> Attr:
 _internal_tool_attrs = {
     "cd_run": _internal_tool("prelude//rust/tools:cd_run"),
     "deferred_link_action": _internal_tool("prelude//rust/tools:deferred_link_action"),
+    "ensure_output_dir": _internal_tool("prelude//rust/tools:ensure_output_dir"),
     "extract_link_action": _internal_tool("prelude//rust/tools:extract_link_action"),
     "failure_filter_action": _internal_tool("prelude//rust/tools:failure_filter_action"),
     "from_any_dir": _internal_tool("prelude//rust/tools:from_any_dir"),

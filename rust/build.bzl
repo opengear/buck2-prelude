@@ -268,15 +268,85 @@ def generate_rustdoc_coverage(
 
     return output
 
-def generate_rustdoc_test(
+# The persisted doctest source tree plus the reusable rustdoc/rustc compile
+# context that produced it. The persisted source layout is rustdoc-private; a
+# consumer may inspect it, but the provider contract is only the directory and
+# the compile context needed to build generated doctest sources.
+RustDoctestSourceInfo = provider(
+    # @unsorted-dict-items
+    fields = {
+        # source_dir - directory output of
+        # `rustdoc --test --no-run --persist-doctests`.
+        "source_dir": Artifact,
+        # crate_rlib - the library's own `.rlib`. The persist step built the
+        # generated doctest bundle against it; a consumer puts its directory
+        # on `-Ldependency` so the bundle's transitive crate dep resolves by
+        # SVH.
+        "crate_rlib": Artifact,
+        # compile_context_args - rustc args reusable for compiling generated
+        # doctest sources: target, edition, cfgs, externs, sysroot, linker,
+        # remap, and hidden inputs. Excludes crate root, `--crate-name`, and
+        # `--crate-type`, which belong to the generated consumer crate.
+        "compile_context_args": cmd_args,
+        # env_args - the doctest env encoded as `rustc_action.py`
+        # `--env=`/`--path-env=` wrapper flags. The prelude owns this wire
+        # format; a consumer splices it into the `rustc_action` command
+        # without re-deriving the plain/path split.
+        "env_args": cmd_args,
+    },
+)
+
+# The rustdoc-test compile context threaded from `rustdoc_test_assembly` to
+# its two consumers. The producer fills every field; both
+# `generate_rustdoc_test` and `generate_rustdoc_persist` read it.
+RustdocTestAssembly = record(
+    # The rustdoc invocation up to (not including) the crate root: rustdoc,
+    # `--test`, the test builder, and rustdoc flags.
+    rustdoc_prefix = field(cmd_args),
+    # Crate-root-onward compile args shared by the run and persist tails.
+    rustdoc_compile_args = field(cmd_args),
+    # Doctest env split into plain and path-bearing entries, as
+    # `rustc_action.py` consumes them.
+    plain_env = field(dict[str, cmd_args]),
+    path_env = field(dict[str, cmd_args]),
+    # The shared `_compute_common_args` result; its `reusable_args` feeds the
+    # persisted-source compile context.
+    common_args = field(CommonArgsInfo),
+    # Linker argsfile for a downstream consumer compile. Excludes the crate's
+    # own merged link info, which the persisted bundle rlib already carries.
+    consumer_linker_argsfile = field(Artifact),
+    # Doctest resource db passed to the run-test runtool.
+    resources = field(Artifact),
+    # `--remap-path-prefix` mapping symlinked srcs back to the package path.
+    remap_path_prefix = field(cmd_args),
+    # Inputs every consumer command must keep live.
+    hidden = field(list),
+    # The library's own `.rlib`.
+    crate_rlib = field(Artifact),
+    # The linker plus its pre-args, emitted as `-Clinker=`.
+    linker = field(cmd_args),
+    internal_tools_info = field(RustInternalToolsInfo),
+    exec_is_windows = field(bool),
+    use_cbp = field(bool),
+)
+
+# The rustdoc-test compile context: externs, sysroot, cross target, linker
+# args, proc-macro externs, path remap, env, and the rustdoc command up to the
+# run/persist tail. `generate_rustdoc_test` and `generate_rustdoc_persist`
+# differ only in that tail; both take this record.
+#
+# This declares output-bearing actions (the doctest resource db), so calling
+# it more than once per `rust_library` declares the same resource-db output
+# twice and fails analysis. It is called once and the result threaded into
+# both consumers.
+def rustdoc_test_assembly(
         ctx: AnalysisContext,
         compile_ctx: CompileContext,
         rlib: Artifact,
         link_infos: dict[LibOutputStyle, LinkInfos],
         params: BuildParams,
-        default_roots: list[str]) -> cmd_args:
+        default_roots: list[str]) -> RustdocTestAssembly:
     toolchain_info = compile_ctx.toolchain_info
-    internal_tools_info = compile_ctx.internal_tools_info
     doc_dep_ctx = DepCollectionContext(
         advanced_unstable_linking = compile_ctx.dep_ctx.advanced_unstable_linking,
         include_doc_deps = True,
@@ -375,10 +445,31 @@ def generate_rustdoc_test(
         has_content_based_path = False,
     )
 
-    if compile_ctx.exec_is_windows:
-        runtool = ["--test-runtool=cmd.exe", "--test-runtool-arg=/V:OFF", "--test-runtool-arg=/C"]
-    else:
-        runtool = ["--test-runtool=/usr/bin/env"]
+    consumer_link_args_output = make_link_args(
+        ctx,
+        ctx.actions,
+        compile_ctx.cxx_toolchain_info,
+        [
+            LinkArgs(flags = executable_args.extra_link_args),
+            get_link_args_for_strategy(
+                ctx.actions,
+                ctx.label,
+                compile_ctx.cxx_toolchain_info.linker_info,
+                inherited_merged_link_infos(ctx, doc_dep_ctx),
+                params.dep_link_strategy,
+                prefer_stripped = False,
+                transformation_spec_context = None,
+            ),
+        ],
+    )
+    consumer_link_args_output.link_args.add(ctx.attrs.doc_linker_flags or [])
+
+    consumer_linker_argsfile, _ = ctx.actions.write(
+        "{}/__{}_doctest_consumer_linker_args.txt".format(common_args.subdir, common_args.tempfile),
+        consumer_link_args_output.link_args,
+        allow_args = True,
+        has_content_based_path = False,
+    )
 
     plain_env, path_env = process_env(compile_ctx, ctx.attrs.env)
     doc_plain_env, doc_path_env = process_env(compile_ctx, ctx.attrs.doc_env)
@@ -389,47 +480,175 @@ def generate_rustdoc_test(
         plain_env.pop(k, None)
         path_env[k] = v
 
-    # `--runtool` is unstable.
+    # `--runtool` and `--persist-doctests` are both unstable.
     plain_env["RUSTC_BOOTSTRAP"] = cmd_args("1")
-    unstable_options = ["-Zunstable-options"]
 
     if toolchain_info.rust_target_path != None:
         path_env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
 
-    rustdoc_cmd = cmd_args(
-        [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
-        [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
+    # The rustdoc invocation split before the crate root. `common_args.args`
+    # begins with the crate root, and rustdoc test-control flags such as
+    # `--no-run` and `--persist-doctests` must be parsed as rustdoc options
+    # rather than trailing test arguments.
+    rustdoc_prefix = cmd_args(
         toolchain_info.rustdoc,
         "--rustc-action-separator",
         "--test",
-        unstable_options,
+        "-Zunstable-options",
         cmd_args("--test-builder=", toolchain_info.compiler, delimiter = ""),
         toolchain_info.rustdoc_flags,
         ctx.attrs.rustdoc_flags,
+    )
+    rustdoc_compile_args = cmd_args(
         common_args.args,
         extern_arg([], attr_crate(ctx), rlib),
         "--extern=proc_macro" if ctx.attrs.proc_macro else [],
         cmd_args(compile_ctx.linker_with_pre_args, format = "-Clinker={}"),
         cmd_args(linker_argsfile, format = "-Clink-arg=@{}"),
+    )
+
+    remap_path_prefix = cmd_args(
+        "--remap-path-prefix=",
+        compile_ctx.symlinked_srcs,
+        compile_ctx.path_sep,
+        "=",
+        compile_ctx.symlinked_srcs.owner.path,
+        compile_ctx.path_sep,
+        delimiter = "",
+    )
+
+    hidden = [
+        transitive_srcs.project_as_args("artifacts"),
+        link_args_output.hidden,
+        executable_args.runtime_files,
+    ]
+
+    return RustdocTestAssembly(
+        rustdoc_prefix = rustdoc_prefix,
+        rustdoc_compile_args = rustdoc_compile_args,
+        plain_env = plain_env,
+        path_env = path_env,
+        common_args = common_args,
+        consumer_linker_argsfile = consumer_linker_argsfile,
+        resources = resources,
+        remap_path_prefix = remap_path_prefix,
+        hidden = hidden + [consumer_link_args_output.hidden],
+        crate_rlib = rlib,
+        linker = compile_ctx.linker_with_pre_args,
+        internal_tools_info = compile_ctx.internal_tools_info,
+        exec_is_windows = compile_ctx.exec_is_windows,
+        use_cbp = getattr(ctx.attrs, "use_content_based_paths", False),
+    )
+
+def _rustdoc_test_env_args(plain_env: dict, path_env: dict) -> list:
+    return [
+        [cmd_args("--env=", k, "=", v, delimiter = "") for k, v in plain_env.items()],
+        [cmd_args("--path-env=", k, "=", v, delimiter = "") for k, v in path_env.items()],
+    ]
+
+# The rustdoc `--test` command that compiles and runs the crate's doctests:
+# the assembled compile context plus the run-test tail (runtool, resources,
+# color). Returned as a `cmd_args` for an `ExternalRunnerTestInfo`.
+def generate_rustdoc_test(
+        ctx: AnalysisContext,
+        assembly: RustdocTestAssembly) -> cmd_args:
+    if assembly.exec_is_windows:
+        runtool = ["--test-runtool=cmd.exe", "--test-runtool-arg=/V:OFF", "--test-runtool-arg=/C"]
+    else:
+        runtool = ["--test-runtool=/usr/bin/env"]
+
+    rustdoc_cmd = cmd_args(
+        _rustdoc_test_env_args(assembly.plain_env, assembly.path_env),
+        assembly.rustdoc_prefix,
+        assembly.rustdoc_compile_args,
         runtool,
-        cmd_args(internal_tools_info.rustdoc_test_with_resources, format = "--test-runtool-arg={}"),
-        cmd_args("--test-runtool-arg=--resources=", resources, delimiter = ""),
+        cmd_args(assembly.internal_tools_info.rustdoc_test_with_resources, format = "--test-runtool-arg={}"),
+        cmd_args("--test-runtool-arg=--resources=", assembly.resources, delimiter = ""),
         "--color=always",
         "--test-args=--color=always",
-        cmd_args("--remap-path-prefix=", compile_ctx.symlinked_srcs, compile_ctx.path_sep, "=", compile_ctx.symlinked_srcs.owner.path, compile_ctx.path_sep, delimiter = ""),
-        hidden = [
-            transitive_srcs.project_as_args("artifacts"),
-            link_args_output.hidden,
-            executable_args.runtime_files,
-        ],
+        assembly.remap_path_prefix,
+        hidden = assembly.hidden,
     )
 
     return _long_command(
         ctx = ctx,
-        exe = internal_tools_info.rustc_action,
+        exe = assembly.internal_tools_info.rustc_action,
         args = rustdoc_cmd,
-        argfile_name = "{}.args".format(common_args.subdir),
-        has_content_based_path = getattr(ctx.attrs, "use_content_based_paths", False),
+        argfile_name = "{}.args".format(assembly.common_args.subdir),
+        has_content_based_path = assembly.use_cbp,
+    )
+
+# The rustdoc `--test` command that persists the doctest SOURCE instead of
+# running it: the assembled compile context plus `--no-run` and
+# `--persist-doctests <dir>`.
+#
+# `--no-run -Zunstable-options --persist-doctests <dir>` writes the generated
+# doctest source under <dir> for any edition. The directory layout is
+# rustdoc-version and edition dependent (see `RustDoctestSourceInfo`); this
+# action does not depend on it. The persisted source is the rewrite point a
+# downstream stage compiles, feeding the compile context surfaced on
+# `RustDoctestSourceInfo` back to rustc.
+#
+# A normal build action producing a directory output, not an
+# `ExternalRunnerTestInfo`.
+def generate_rustdoc_persist(
+        ctx: AnalysisContext,
+        assembly: RustdocTestAssembly) -> RustDoctestSourceInfo:
+    source_dir = ctx.actions.declare_output(
+        "{}-doctest-src".format(assembly.common_args.subdir),
+        dir = True,
+        has_content_based_path = assembly.use_cbp,
+    )
+
+    if assembly.exec_is_windows:
+        runtool = ["--test-runtool=cmd.exe", "--test-runtool-arg=/V:OFF", "--test-runtool-arg=/C", "--test-runtool-arg=exit", "--test-runtool-arg=0"]
+    else:
+        runtool = ["--test-runtool=/usr/bin/true"]
+
+    rustdoc_cmd = cmd_args(
+        _rustdoc_test_env_args(assembly.plain_env, assembly.path_env),
+        assembly.rustdoc_prefix,
+        "--no-run",
+        cmd_args(source_dir.as_output(), format = "--persist-doctests={}"),
+        runtool,
+        assembly.rustdoc_compile_args,
+        assembly.remap_path_prefix,
+        hidden = assembly.hidden,
+    )
+
+    persist_cmd = _long_command(
+        ctx = ctx,
+        exe = assembly.internal_tools_info.rustc_action,
+        args = rustdoc_cmd,
+        argfile_name = "{}-persist.args".format(assembly.common_args.subdir),
+        has_content_based_path = assembly.use_cbp,
+    )
+
+    # rustdoc does not create the `--persist-doctests` directory when a crate
+    # has no doctests, but it is a declared output a downstream stage consumes.
+    # `ensure_output_dir` materializes the empty directory after a successful
+    # run so the declared output is always present, keeping the empty-crate
+    # contract out of the shared `rustc_action` wrapper.
+    ctx.actions.run(
+        cmd_args(
+            assembly.internal_tools_info.ensure_output_dir,
+            source_dir.as_output(),
+            persist_cmd,
+        ),
+        category = "rustdoc_persist",
+    )
+
+    return RustDoctestSourceInfo(
+        source_dir = source_dir,
+        crate_rlib = assembly.crate_rlib,
+        compile_context_args = cmd_args(
+            assembly.common_args.reusable_args,
+            cmd_args(assembly.linker, format = "-Clinker={}"),
+            cmd_args(assembly.consumer_linker_argsfile, format = "-Clink-arg=@{}"),
+            assembly.remap_path_prefix,
+            hidden = assembly.hidden,
+        ),
+        env_args = cmd_args(_rustdoc_test_env_args(assembly.plain_env, assembly.path_env)),
     )
 
 # Generate a compilation action. A single instance of rustc can emit
@@ -1211,10 +1430,12 @@ def _compute_common_args(
     if not getattr(ctx.attrs, "uses_restricted_rustc_flags", False):
         _check_restricted_rustc_flags(ctx.attrs.rustc_flags, toolchain_info)
 
-    args = cmd_args(
+    crate_identity_args = cmd_args(
         cmd_args(compile_ctx.symlinked_srcs, compile_ctx.path_sep, root, delimiter = ""),
         crate_name_arg,
         "--crate-type={}".format(crate_type.value),
+    )
+    reusable_args = cmd_args(
         "-Crelocation-model={}".format(params.reloc_model.value),
         "--edition={}".format(edition),
         "-Cmetadata={}".format(_metadata(compile_ctx, ctx.label, is_rustdoc_test)[0]),
@@ -1238,9 +1459,11 @@ def _compute_common_args(
         cmd_args(ctx.attrs.features, format = '--cfg=feature="{}"'),
         dep_args,
     )
+    args = cmd_args(crate_identity_args, reusable_args)
 
     common_args = CommonArgsInfo(
         args = args,
+        reusable_args = reusable_args,
         subdir = subdir,
         tempfile = tempfile,
         crate_type = crate_type,

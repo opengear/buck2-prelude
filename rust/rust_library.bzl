@@ -74,11 +74,14 @@ load(
 load("@prelude//unix:providers.bzl", "UnixEnv", "create_unix_env_info")
 load(
     ":build.bzl",
+    "RustDoctestSourceInfo",  # @unused Used as a type
     "generate_rustdoc",
     "generate_rustdoc_coverage",
+    "generate_rustdoc_persist",
     "generate_rustdoc_test",
     "rust_compile",
     "rust_link_shared",
+    "rustdoc_test_assembly",
 )
 load(
     ":build_params.bzl",
@@ -379,13 +382,21 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         linker_type = compile_ctx.cxx_toolchain_info.linker_info.type,
         target_os_type = ctx.attrs._target_os_type[OsLookup],
     )
-    rustdoc_test = generate_rustdoc_test(
+    rustdoc_assembly = rustdoc_test_assembly(
         ctx = ctx,
         compile_ctx = compile_ctx,
         rlib = param_output[static_library_params].output,
         link_infos = link_infos,
         params = rustdoc_test_params,
         default_roots = _DEFAULT_ROOTS,
+    )
+    rustdoc_test = generate_rustdoc_test(
+        ctx = ctx,
+        assembly = rustdoc_assembly,
+    )
+    rustdoc_source = generate_rustdoc_persist(
+        ctx = ctx,
+        assembly = rustdoc_assembly,
     )
 
     # infallible_diagnostics allows us to circumvent compilation failures and
@@ -436,6 +447,7 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         remarks_artifact = remarks_artifact,
         rustdoc = rustdoc,
         rustdoc_test = rustdoc_test,
+        rustdoc_source = rustdoc_source,
         doctests_enabled = doctests_enabled,
         check_artifacts = output_as_diag_subtargets(diag_artifacts[incr_enabled], clippy_artifacts[incr_enabled]),
         expand = expand.output,
@@ -711,6 +723,7 @@ def _default_providers(
         remarks_artifact: RustcOutput,
         rustdoc: Artifact,
         rustdoc_test: cmd_args,
+        rustdoc_source: RustDoctestSourceInfo,
         doctests_enabled: bool,
         check_artifacts: dict[str, Artifact | None],
         expand: Artifact,
@@ -771,6 +784,20 @@ def _default_providers(
 
     # Always let the user run doctests via `buck2 test :crate[doc]`
     sub_targets["doc"].append(rustdoc_test_info)
+
+    # Always expose the persisted doctest SOURCE plus the assembled compile
+    # context, mirroring how `[doc]` is exposed unconditionally even under the
+    # cross-compile gate (the gate only controls top-level providers). A
+    # downstream rule depends on `:crate[doctest-src]`, reads
+    # `RustDoctestSourceInfo`, and compiles the persisted source into a stock
+    # libtest binary reusing the externs/sysroot/linker/target/path-remap
+    # context here rather than reconstructing it from providers. The directory
+    # output is the `DefaultInfo` default so `buck2 build :crate[doctest-src]`
+    # materializes the persisted source.
+    sub_targets["doctest-src"] = [
+        DefaultInfo(default_output = rustdoc_source.source_dir),
+        rustdoc_source,
+    ]
 
     # But only run it as a part of `buck2 test :crate` if it's not disabled
     if doctests_enabled:
