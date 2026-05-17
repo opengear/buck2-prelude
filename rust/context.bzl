@@ -44,6 +44,7 @@ load(
 # (rustdoc just relays bunch of the same args to rustc when trying to gen docs)
 CommonArgsInfo = record(
     args = field(cmd_args),
+    reusable_args = field(cmd_args),
     arch_dependency_args = field(dict[str, cmd_args] | None),
     subdir = field(str),
     tempfile = field(str),

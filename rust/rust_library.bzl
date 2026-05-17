@@ -88,9 +88,11 @@ load(
     ":build.bzl",
     "generate_rustdoc",
     "generate_rustdoc_coverage",
+    "generate_rustdoc_persist",
     "generate_rustdoc_test",
     "rust_compile",
     "rust_link_shared",
+    "rustdoc_test_assembly",
 )
 load(
     ":build_params.bzl",
@@ -138,6 +140,7 @@ load(
 load(":named_deps.bzl", "write_named_deps_names")
 load(
     ":outputs.bzl",
+    "RustDoctestSourceInfo",  # @unused Used as a type
     "RustcExtraOutputsInfo",
     "RustcOutput",  # @unused Used as a type
     "output_as_diag_subtargets",
@@ -432,15 +435,29 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
     if toolchain_info.rustc_target_triple != None and toolchain_info.rustc_target_triple != targets.exec_triple(ctx):
         doctests_enabled = False
 
-    if toolchain_info.nightly_features and compile_ctx.arch_toolchain_info == None:
-        rustdoc_test_metadata_kind = MetadataKind("full") if toolchain_info.advanced_unstable_linking and not ctx.attrs.proc_macro else MetadataKind("link")
+    # Doctests and `[doctest-src]` build against a single-arch toolchain only.
+    # `RustDoctestSourceInfo` carries one compile context, so a dual-arch
+    # toolchain omits `[doctest-src]`.
+    single_arch = compile_ctx.arch_toolchain_info == None
+    persist_doctest_source = ctx.attrs.doctests != False and single_arch
+    rustdoc_test_metadata_kind = MetadataKind("full") if toolchain_info.advanced_unstable_linking and not ctx.attrs.proc_macro else MetadataKind("link")
+    if persist_doctest_source and rustdoc_test_metadata_kind == MetadataKind("full"):
+        fail(
+            "`[doctest-src]` does not work under `advanced_unstable_linking`. "
+            + "Under that setting the library's own rlib contains only metadata, and a link of the persisted doctest source misses the library's object code. "
+            + "Set `doctests = False` to omit `[doctest-src]`."
+        )
+
+    rustdoc_test = None
+    rustdoc_source = None
+    if single_arch and (toolchain_info.nightly_features or persist_doctest_source):
         rustdoc_test_params = binary_build_params(
             proc_macro = ctx.attrs.proc_macro,
             link_strategy = doc_link_strategy,
             linker_type = compile_ctx.cxx_toolchain_info.linker_info.type,
             target_os_type = ctx.attrs._target_os_type[OsLookup],
         )
-        rustdoc_test = generate_rustdoc_test(
+        rustdoc_assembly = rustdoc_test_assembly(
             ctx = ctx,
             compile_ctx = compile_ctx,
             rlib = param_metadata_outputs[static_library_params][rustdoc_test_metadata_kind].product.output,
@@ -448,10 +465,22 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
             params = rustdoc_test_params,
             default_roots = _DEFAULT_ROOTS,
         )
-    else:
+        if toolchain_info.nightly_features:
+            rustdoc_test = generate_rustdoc_test(
+                ctx = ctx,
+                compile_ctx = compile_ctx,
+                assembly = rustdoc_assembly,
+            )
+        if persist_doctest_source:
+            rustdoc_source = generate_rustdoc_persist(
+                ctx = ctx,
+                compile_ctx = compile_ctx,
+                assembly = rustdoc_assembly,
+            )
+
+    if not toolchain_info.nightly_features or not single_arch:
         # Doctests are invoked via rustdoc's unstable `--test-runtool`
         doctests_enabled = False
-        rustdoc_test = None
 
     # infallible_diagnostics allows us to circumvent compilation failures and
     # treat the resulting rustc action as a success, even if a metadata
@@ -505,6 +534,7 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         remarks_artifact = remarks_artifact,
         rustdoc = rustdoc,
         rustdoc_test = rustdoc_test,
+        rustdoc_source = rustdoc_source,
         doctests_enabled = doctests_enabled,
         doc_supports_test_execution_caching = ctx.attrs.doc_supports_test_execution_caching,
         re_executors = re_executors,
@@ -793,6 +823,7 @@ def _default_providers(
     remarks_artifact: RustcOutput,
     rustdoc: Artifact,
     rustdoc_test: cmd_args | None,
+    rustdoc_source: RustDoctestSourceInfo | None,
     doctests_enabled: bool,
     doc_supports_test_execution_caching: bool,
     re_executors: RemoteTestExecutorConfig,
@@ -872,6 +903,20 @@ def _default_providers(
         # But only run it as a part of `buck2 test :crate` if it's not disabled
         if doctests_enabled:
             providers.append(rustdoc_test_info)
+
+    if rustdoc_source != None:
+        # Expose the persisted doctest source and its compile context with or
+        # without `nightly_features`, and under the cross-compile gate, which
+        # controls only the top-level providers. `doctests = False` omits the
+        # sub-target. A downstream rule depends on `:crate[doctest-src]`, reads
+        # `RustDoctestSourceInfo`, and compiles the persisted source into a
+        # libtest binary with the compile context recorded here. The directory
+        # is the `DefaultInfo` default output, so
+        # `buck2 build :crate[doctest-src]` materializes the persisted source.
+        sub_targets["doctest-src"] = [
+            DefaultInfo(default_output = rustdoc_source.source_dir),
+            rustdoc_source,
+        ]
 
     providers.append(
         DefaultInfo(
