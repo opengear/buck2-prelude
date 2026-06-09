@@ -31,6 +31,13 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.python_bootstrap_binary(
+    name = "strip_link_action",
+    has_content_based_path = True,
+    main = "strip_link_action.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "rustc_action",
     has_content_based_path = True,
     main = "rustc_action.py",
@@ -150,6 +157,7 @@ prelude.python_library(
         "rustdoc_coverage.py",
         "rustdoc_test_with_resources.py",
         "shared_libraries_symlink_tree.py",
+        "strip_link_action.py",
         "symlink_only_dir_entry.py",
         "transitive_dependency_symlinks.py",
     ],

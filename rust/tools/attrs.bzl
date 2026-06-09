@@ -23,6 +23,7 @@ _internal_tool_attrs = {
     "rustdoc_coverage": _internal_tool("prelude//rust/tools:rustdoc_coverage"),
     "rustdoc_test_with_resources": _internal_tool("prelude//rust/tools:rustdoc_test_with_resources"),
     "shared_libraries_symlink_tree": _internal_tool("prelude//rust/tools:shared_libraries_symlink_tree"),
+    "strip_link_action": _internal_tool("prelude//rust/tools:strip_link_action"),
     "symlink_only_dir_entry": _internal_tool("prelude//rust/tools:symlink_only_dir_entry"),
     "transitive_dependency_symlinks_tool": _internal_tool("prelude//rust/tools:transitive_dependency_symlinks"),
 }

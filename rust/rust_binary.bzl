@@ -246,6 +246,10 @@ def _rust_binary_common(
             "`elf_sections` is set, but the sections are added as part of the cxx link. "
             + "This target links via rustc; `elf_sections` requires `advanced_unstable_linking` on the Rust toolchain."
         )
+    if ctx.attrs.separate_debug_info and links_via_cxx:
+        fail(
+            "`separate_debug_info` is set, but this target links via cxx under `advanced_unstable_linking`, and the cxx link does not split debug information."
+        )
     enable_late_build_info_stamping = cxx_stamp_build_info(ctx)
     content_based_output = getattr(ctx.attrs, "has_content_based_path", False)
     unstamped_name = None
@@ -763,6 +767,9 @@ def _rust_binary_common(
                 + ([executable_shlib_args.dwp_symlink_tree] if executable_shlib_args.dwp_symlink_tree else []),
             ),
         ]
+
+    if link.link_output and link.link_output.debuginfo:
+        sub_targets["debuginfo"] = [DefaultInfo(default_output = link.link_output.debuginfo)]
 
     if pdb_output:
         sub_targets[PDB_SUB_TARGET] = get_pdb_providers(pdb = pdb_output, binary = final_output)
