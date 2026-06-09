@@ -46,6 +46,9 @@ RustcLinkedOutput = record(
     import_library = field(Artifact | None),
     pdb = field(Artifact | None),
     dwp_output = field(Artifact | None),
+    # Debug info split out at link time: a `.debuginfo` gnu-debuglink sidecar
+    # on ELF, a `.dSYM` bundle on Mach-O.
+    debuginfo = field(Artifact | None, None),
 )
 
 # The link inputs rustc synthesized for a bin crate, captured by the linker

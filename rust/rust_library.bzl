@@ -872,6 +872,9 @@ def _default_providers(
         dwp_output = getattr(artifact.product, "dwp_output", None)
         if dwp_output:
             nested_sub_targets["dwp"] = [DefaultInfo(default_output = dwp_output)]
+        debuginfo_output = getattr(artifact.product, "debuginfo", None)
+        if debuginfo_output:
+            nested_sub_targets["debuginfo"] = [DefaultInfo(default_output = debuginfo_output)]
 
         sub_targets[name] = [
             DefaultInfo(

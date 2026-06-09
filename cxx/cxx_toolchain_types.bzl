@@ -223,6 +223,7 @@ CxxInternalTools = provider(
         serialized_diagnostics_to_json_wrapper = RunInfo,
         shlib_interface_link_wrapper = RunInfo,
         stderr_to_file = RunInfo,
+        strip_link_action = RunInfo,
         stub_header_unit = RunInfo,
     )
 )

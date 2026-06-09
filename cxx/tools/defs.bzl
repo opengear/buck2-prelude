@@ -24,6 +24,7 @@ def _cxx_internal_tools_impl(ctx: AnalysisContext) -> list[Provider]:
             serialized_diagnostics_to_json_wrapper = ctx.attrs.serialized_diagnostics_to_json_wrapper[RunInfo],
             shlib_interface_link_wrapper = ctx.attrs.shlib_interface_link_wrapper[RunInfo],
             stderr_to_file = ctx.attrs.stderr_to_file[RunInfo],
+            strip_link_action = ctx.attrs.strip_link_action[RunInfo],
             stub_header_unit = ctx.attrs.stub_header_unit[RunInfo],
         ),
     ]
@@ -43,6 +44,7 @@ cxx_internal_tools = rule(
         "serialized_diagnostics_to_json_wrapper": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:serialized_diagnostics_to_json_wrapper"),
         "shlib_interface_link_wrapper": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:shlib_interface_link_wrapper"),
         "stderr_to_file": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:stderr_to_file"),
+        "strip_link_action": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:strip_link_action"),
         "stub_header_unit": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:stub_header_unit"),
     },
 )

@@ -31,6 +31,7 @@ CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stag
         "remap_cwd",
         "shlib_interface_link_wrapper",
         "stderr_to_file",
+        "strip_link_action",
         "stub_header_unit",
     ]
 ]
@@ -71,6 +72,7 @@ cxx_internal_tools(
     serialized_diagnostics_to_json_wrapper = ":serialized_diagnostics_to_json_wrapper",
     shlib_interface_link_wrapper = ":shlib_interface_link_wrapper-construction",
     stderr_to_file = ":stderr_to_file-construction",
+    strip_link_action = ":strip_link_action-construction",
     stub_header_unit = ":stub_header_unit-construction",
     visibility = ["PUBLIC"],
 )
@@ -181,6 +183,13 @@ prelude.python_bootstrap_binary(
     visibility = ["PUBLIC"],
 )
 
+prelude.python_bootstrap_binary(
+    name = "strip_link_action",
+    has_content_based_path = True,
+    main = "strip_link_action.py",
+    visibility = ["PUBLIC"],
+)
+
 prelude.sh_binary(
     name = "serialized_diagnostics_to_json_wrapper",
     main = "serialized_diagnostics_to_json_wrapper.sh",
@@ -219,6 +228,7 @@ prelude.python_library(
         "show_includes_to_dep_file.py",
         "simple_ar.py",
         "stderr_to_file.py",
+        "strip_link_action.py",
         "stub_header_unit.py",
     ],
     typing = True,
