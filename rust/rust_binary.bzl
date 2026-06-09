@@ -508,6 +508,9 @@ def _rust_binary_common(
             ),
         ]
 
+    if link.link_output.debuginfo:
+        sub_targets["debuginfo"] = [DefaultInfo(default_output = link.link_output.debuginfo)]
+
     if link.link_output.pdb:
         sub_targets[PDB_SUB_TARGET] = get_pdb_providers(pdb = link.link_output.pdb, binary = final_output)
 

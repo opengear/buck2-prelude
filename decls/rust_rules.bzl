@@ -34,7 +34,12 @@ def _rust_common_attributes(is_binary: bool):
             "incremental_enabled": attrs.bool(default = False),
             "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source()), sorted = True, default = []),
             "rustdoc_flags": attrs.list(attrs.arg(), default = []),
-            "separate_debug_info": attrs.bool(default = False),
+            "separate_debug_info": attrs.bool(default = False, doc = """
+                Ship this target's linked output with its debug information separated
+                out of band (an ELF `.debuginfo` gnu-debuglink sidecar or a Mach-O
+                `.dSYM` bundle), surfaced at the `[debuginfo]` sub-target. On a
+                `rust_library`, applies to the cdylib crate type only.
+            """),
             "use_content_based_paths": attrs.bool(default = True),
             "uses_restricted_rustc_flags": attrs.bool(default = False),
             "_exec_os_type": buck.exec_os_type_arg(),

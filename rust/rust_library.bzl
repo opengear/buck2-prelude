@@ -776,6 +776,8 @@ def _default_providers(
         nested_sub_targets = {k: [DefaultInfo(default_output = v.output)] for k, v in param_subtargets[param].items()}
         if artifact.compile_output.stripped_output:
             nested_sub_targets["stripped"] = [DefaultInfo(default_output = artifact.compile_output.stripped_output)]
+        if artifact.link_output and artifact.link_output.debuginfo:
+            nested_sub_targets["debuginfo"] = [DefaultInfo(default_output = artifact.link_output.debuginfo)]
 
         sub_targets[name] = [
             DefaultInfo(
