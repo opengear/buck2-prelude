@@ -27,8 +27,9 @@ load(
 load(
     "@prelude//cxx:cxx_toolchain_types.bzl",
     "LinkerType",
+    "get_split_debug_container",
 )
-load("@prelude//cxx:debug.bzl", "SplitDebugMode")
+load("@prelude//cxx:debug.bzl", "SplitDebugContainer", "SplitDebugMode")
 load("@prelude//cxx:dwp.bzl", "dwp", "dwp_available")
 load(
     "@prelude//cxx:link.bzl",
@@ -723,6 +724,28 @@ def rust_compile(
     # deferred_link_action
     deferred_link_enabled = requires_linking and _deferred_link_enabled(compile_ctx, params, emit)
 
+    split_debug_mode = compile_ctx.cxx_toolchain_info.split_debug_mode or SplitDebugMode("none")
+    has_split_debug = split_debug_mode != SplitDebugMode("none")
+
+    # Ship a bin crate with its debug separated out of band at link time, so the
+    # full-debug binary is never a declared output (no second CAS copy).
+    # `separate_debug_info` is the per-target intent ("separate my debug"); the
+    # mechanism it resolves to is derived from the toolchain by
+    # `get_split_debug_container` -- a gnu-debuglink sidecar on ELF, a `.dSYM` bundle
+    # on Mach-O, and none when a split mode already externalizes the debug into
+    # `.dwo`/`.dwp`. Gated on the predeclared (shipped binary) link: auxiliary
+    # `emit=link` compiles (remarks, profiling) have no predeclared output and
+    # must not separate.
+    want_separate_debug = (
+        requires_linking and
+        predeclared_output != None and
+        params.crate_type == CrateType("bin") and
+        getattr(ctx.attrs, "separate_debug_info", False)
+    )
+    split_debug_container = (
+        get_split_debug_container(compile_ctx.cxx_toolchain_info) if want_separate_debug else SplitDebugContainer("none")
+    )
+
     rustc_cmd = cmd_args(
         # Lints go first to allow other args to override them.
         lints,
@@ -793,10 +816,9 @@ def rust_compile(
             )
             emit_op.env["CLIPPY_CONF_DIR"] = clippy_conf_dir
 
-    split_debug_mode = compile_ctx.cxx_toolchain_info.split_debug_mode or SplitDebugMode("none")
-    has_split_debug = split_debug_mode != SplitDebugMode("none")
-
     deferred_link_cmd = None
+    debuginfo_output = None
+    dsym_output = None
     import_library = None
     pdb_artifact = None
     dwp_inputs = []
@@ -842,7 +864,7 @@ def rust_compile(
             has_content_based_path = emit_cbp,
         )
 
-        separate_debug_info_args = cmd_args()
+        dwo_rewrite_args = cmd_args()
         if has_split_debug:
             external_debug_infos = project_artifacts(
                 ctx.actions,
@@ -869,28 +891,28 @@ def rust_compile(
                 # inputs here and so do not participate in the re-writing. Right now that doesn't matter
                 # anyway because Rust doesn't have content addressed artifacts. In the future that may
                 # be a source of bugs though.
-                separate_debug_info_path_file, _ = ctx.actions.write(
+                dwo_paths_file, _ = ctx.actions.write(
                     "{}/__{}_dwo_paths.txt".format(subdir, tempfile),
                     external_debug_infos,
                     allow_args = True,
                     has_content_based_path = False,
                 )
-                separate_debug_info_args = cmd_args(
+                dwo_rewrite_args = cmd_args(
                     "--rewrite-content-based-dwo-paths",
-                    separate_debug_info_path_file,
+                    dwo_paths_file,
                     "--content-based-dwo-suffix",
                     ".dwo" if split_debug_mode == SplitDebugMode("split") else ".o",
                 )
 
         linker_argsfile, _ = ctx.actions.write(
             "{}/__{}_linker_args.txt".format(subdir, tempfile),
-            cmd_args(link_args_output.link_args, separate_debug_info_args),
+            cmd_args(link_args_output.link_args, dwo_rewrite_args),
             allow_args = True,
             has_content_based_path = False,
         )
         linker_argsfile = cmd_args(
             linker_argsfile,
-            hidden = [link_args_output.hidden, separate_debug_info_args],
+            hidden = [link_args_output.hidden, dwo_rewrite_args],
         )
 
         pdb_artifact = link_args_output.pdb_artifact
@@ -926,11 +948,48 @@ def rust_compile(
                 get_output_flags(compile_ctx.cxx_toolchain_info.linker_info.type, emit_op.output),
                 hidden = out_artifacts_dir,
             )
+        elif split_debug_container == SplitDebugContainer("gnu_debuglink"):
+            # rustc links normally (real rlibs) but through a wrapper that
+            # redirects the link to a scratch path and objcopy-splits the
+            # full-debug binary into the stripped output (rustc's -o temp, which
+            # rustc copies to emit_op.output) plus a `.debuginfo` sidecar. The
+            # full-debug binary is wrapper scratch, never a declared output, so
+            # its DWARF is not stored in CAS a second time.
+            rustc_cmd.add(cmd_args(linker_argsfile, format = "-Clink-arg=@{}"))
+            debuginfo_output = ctx.actions.declare_output(
+                common_args.subdir + "/__debuginfo__/" + emit_op.output.short_path + ".debuginfo",
+                has_content_based_path = emit_cbp,
+            )
+            linker = cmd_script(
+                actions = ctx.actions,
+                name = common_args.subdir + "/linker_wrapper",
+                cmd = cmd_args(
+                    compile_ctx.internal_tools_info.strip_link_action,
+                    cmd_args(compile_ctx.cxx_toolchain_info.binary_utilities_info.objcopy, format = "--objcopy={}"),
+                    cmd_args(debuginfo_output.as_output(), format = "--debuginfo_out={}"),
+                    compile_ctx.linker_with_pre_args,
+                ),
+                language = ctx.attrs._exec_os_type[OsLookup].script,
+                has_content_based_path = True,
+            )
         else:
             rustc_cmd.add(cmd_args(linker_argsfile, format = "-Clink-arg=@{}"))
             linker = compile_ctx.linker_with_pre_args
 
         rustc_cmd.add(cmd_args(linker, format = "-Clinker={}"))
+
+        if split_debug_container == SplitDebugContainer("dsym"):
+            # rustc writes the `.dSYM` bundle adjacent to its `--emit=link`
+            # output, at `<output>.dSYM`. The binary output is non-content-based
+            # (predeclared, enforced by the gate), so that path is deterministic
+            # and the sibling is declarable. There is no rustc flag for the
+            # bundle location, so the output is bound to the action via `hidden`.
+            dsym_output = ctx.actions.declare_output(
+                emit_op.output.short_path + ".dSYM",
+                dir = True,
+                has_content_based_path = emit_cbp,
+            )
+            rustc_cmd.add(cmd_args(hidden = dsym_output.as_output()))
 
     if toolchain_info.rust_target_path != None:
         emit_op.env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
@@ -1044,6 +1103,7 @@ def rust_compile(
             import_library = import_library,
             pdb = pdb_artifact,
             dwp_output = dwp_output,
+            debuginfo = debuginfo_output or dsym_output,
         )
         if emit == Emit("link")
         else None,
