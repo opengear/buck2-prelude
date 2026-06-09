@@ -32,6 +32,8 @@ RustcLinkOutput = record(
     import_library = field(Artifact | None),
     pdb = field(Artifact | None),
     dwp_output = field(Artifact | None),
+    # `.debuginfo` gnu-debuglink sidecar from the fused strip-at-link path.
+    debuginfo = field(Artifact | None, None),
 )
 
 RustcOutput = record(
