@@ -235,7 +235,7 @@ def generate_rustdoc_coverage(
     use_cbp = getattr(ctx.attrs, "use_content_based_paths", False)
     output = ctx.actions.declare_output(file, has_content_based_path = use_cbp)
 
-    plain_env, path_env = process_env(compile_ctx, ctx.attrs.env)
+    plain_env, path_env = process_env(compile_ctx, toolchain_info.rustdoc_env | ctx.attrs.env)
     plain_env["RUSTDOC_BUCK_TARGET"] = cmd_args(str(ctx.label.raw_target()))
 
     if toolchain_info.rust_target_path != None:
