@@ -23,6 +23,7 @@ load(
     "@prelude//cxx:cxx_toolchain_types.bzl",
     "CxxToolchainInfo",
     "LinkerType",
+    "get_split_debug_container",
 )
 load(
     "@prelude//cxx/dist_lto:dist_lto.bzl",
@@ -73,7 +74,7 @@ load(
     "linker_supports_linker_maps",
     "make_link_args",
 )
-load(":debug.bzl", "SplitDebugMode")
+load(":debug.bzl", "SplitDebugContainer", "SplitDebugMode")
 load(":dwp.bzl", "dwp", "dwp_available")
 load(":hip_debug_extract.bzl", "PRE_EXTRACT_SUFFIX", "hip_debug_extract_available")
 load(":link_types.bzl", "CxxLinkResultType", "LinkOptions", "get_dwp_execution_preference", "merge_link_options")
@@ -278,6 +279,42 @@ def cxx_link_into(
     sanitizer_runtime_args = cxx_sanitizer_runtime_arguments(ctx, cxx_toolchain_info, output)
     runtime_library_args = cxx_runtime_library_arguments(cxx_toolchain_info)
 
+    # Ship the executable stripped, with its DWARF split out inside this one
+    # link action. The full-debug binary is never a declared output, and CAS
+    # does not store a second copy of it. The linker writes the full-debug
+    # binary to scratch, and objcopy emits the stripped `output` plus a
+    # `.debuginfo` sidecar. `get_split_debug_container` resolves the mechanism
+    # from the toolchain. gnu-debuglink applies only to an inline-DWARF ELF
+    # binary; a split mode or a non-gnu linker yields a different mechanism or
+    # none.
+    fuse_debuglink = (
+        opts.separate_debug_info and
+        is_result_executable and
+        get_split_debug_container(cxx_toolchain_info) == SplitDebugContainer("gnu_debuglink")
+    )
+
+    expect(
+        not (fuse_debuglink and cxx_use_bolt(ctx)),
+        "`bolt_profile` and the in-link debug split from `separate_debug_info` are mutually exclusive on the same link. BOLT rewrites the full-debug binary after the link, and the split writes that binary only to scratch",
+    )
+
+    # The fuse path strips the binary with its own objcopy recipe and skips
+    # `strip_object`. A caller's `strip`/`strip_args_factory` would not apply
+    # to the shipped binary.
+    expect(
+        not (opts.strip and fuse_debuglink),
+        "`strip` (strip_args_factory) and `separate_debug_info` are mutually exclusive on the same link",
+    )
+
+    if fuse_debuglink:
+        # Flatten slashes: `.gnu_debuglink` carries a bare filename, so the
+        # sidecar name cannot contain directories and must not collide across
+        # inputs. The ".debuginfo" suffix is a naming contract; tooling
+        # downstream of the build identifies sidecars by it.
+        debuginfo = ctx.actions.declare_output("__debuginfo__", output.short_path.replace("/", ".") + ".debuginfo", has_content_based_path = False)
+    else:
+        debuginfo = None
+
     def create_local_linker_invocation(add_linker_outputs: bool) -> LinkArgsOutput:
         if linker_map != None and add_linker_outputs:
             links_with_linker_map = opts.links + opts.binary_links + [linker_map_args(cxx_toolchain_info, linker_map.as_output())]
@@ -291,7 +328,12 @@ def cxx_link_into(
             links_with_extra_args = links_with_linker_map
 
         all_link_args = cmd_args(link_cmd_parts.linker_flags)
-        if add_linker_outputs:
+
+        # When fusing, the linker writes the full-debug binary to a scratch
+        # path supplied by the shell wrapper; `output.as_output()` is bound
+        # exactly once, by the objcopy strip pass below. Binding it here as
+        # well would double-bind the artifact.
+        if add_linker_outputs and not fuse_debuglink:
             all_link_args.add(get_output_flags(linker_info.type, output))
             if is_incremental_link:
                 all_link_args.add("/INCREMENTAL")
@@ -452,6 +494,39 @@ def cxx_link_into(
             '""',
             command,
         )
+    elif fuse_debuglink:
+        # The linker writes the full-debug binary to a scratch path inside the
+        # per-action `$BUCK_SCRATCH_PATH`; objcopy then extracts its DWARF into
+        # the `.debuginfo` sidecar and writes the stripped, debuglinked binary
+        # to `output`. `--keep-file-symbols` preserves `.symtab` so on-device
+        # backtraces resolve names without the sidecar. The full-debug binary
+        # stays in scratch and is never declared, so its DWARF is not stored in
+        # CAS a second time. `stamp_build_info` later adds a section to
+        # `output`; the `.gnu_debuglink` CRC is computed over the sidecar at
+        # link time, so a later change to `output` leaves it valid.
+        objcopy = cxx_toolchain_info.binary_utilities_info.objcopy
+        scratch = '"$BUCK_SCRATCH_PATH/' + output.short_path.replace("/", ".") + '.full"'
+
+        # The sidecar is both produced (`--only-keep-debug`) and read
+        # (`--add-gnu-debuglink`) within this one action. Bind it as an output
+        # exactly once (the `DEBUGINFO=` capture), then reference that shell
+        # variable in the strip pass; a second artifact reference would re-add
+        # it as an input of the action that produces it and fail to bind.
+        script = cmd_args(
+            "set -eu",
+            cmd_args('"$@" -o', scratch, format = "{}", delimiter = " "),
+            cmd_args(debuginfo.as_output(), format = 'DEBUGINFO={}'),
+            cmd_args(objcopy, "--only-keep-debug", scratch, '"$DEBUGINFO"', delimiter = " "),
+            cmd_args(objcopy, "--strip-debug", "--keep-file-symbols", '"--add-gnu-debuglink=$DEBUGINFO"', scratch, output.as_output(), delimiter = " "),
+            delimiter = "\n",
+        )
+        command = cmd_args(
+            "/bin/sh",
+            "-c",
+            script,
+            '""',
+            command,
+        )
 
     link_execution_preference_info = LinkExecutionPreferenceInfo(
         preference = opts.link_execution_preference,
@@ -491,8 +566,11 @@ def cxx_link_into(
         pdb = link_unit_generation_link_args.pdb_artifact,
     )
 
+    # When fusing, the link action already emitted the stripped binary as
+    # `output`; the full-debug binary lives only in scratch, so there is no
+    # separate unstripped artifact to carry.
     unstripped_output = output
-    if opts.strip:
+    if opts.strip and not fuse_debuglink:
         strip_args = opts.strip_args_factory(ctx) if opts.strip_args_factory else cmd_args()
         output = strip_object(ctx, cxx_toolchain_info, output, strip_args, opts.category_suffix, allow_cache_upload = enable_late_build_info_stamping)
 
@@ -562,6 +640,7 @@ def cxx_link_into(
         pdb = link_unit_generation_link_args.pdb_artifact,
         ilk = ilk_artifact,
         split_debug_output = split_debug_output,
+        debuginfo = debuginfo,
     )
 
     return CxxLinkResult(

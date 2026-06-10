@@ -51,6 +51,12 @@ LinkOptions = record(
     strip = bool,
     # A function/lambda which will generate the strip args using the ctx.
     strip_args_factory = [typing.Callable, None],
+    # Ship the executable stripped, with its debug split into a `.debuginfo`
+    # gnu-debuglink sidecar inside the link action. The full-debug binary is
+    # never a declared output. The option applies only to an executable under
+    # the gnu linker with `split_debug_mode == none`, and there analysis fails
+    # when BOLT is also on. In every other case the link proceeds unchanged.
+    separate_debug_info = field(bool, False),
     import_library = Artifact | None,
     # `None` expresses no preference, leaving the choice to buck2
     allow_cache_upload = [bool, None],
@@ -80,6 +86,7 @@ def link_options(
     identifier: [str, None] = None,
     strip: bool = False,
     strip_args_factory = None,
+    separate_debug_info: bool = False,
     import_library: Artifact | None = None,
     allow_cache_upload: [bool, None] = False,
     cxx_toolchain: [CxxToolchainInfo, None] = None,
@@ -107,6 +114,7 @@ def link_options(
         identifier = identifier,
         strip = strip,
         strip_args_factory = strip_args_factory,
+        separate_debug_info = separate_debug_info,
         import_library = import_library,
         allow_cache_upload = allow_cache_upload,
         cxx_toolchain = cxx_toolchain,
@@ -138,6 +146,7 @@ def merge_link_options(
     identifier: [str, None, _NotProvided] = _NOT_PROVIDED,
     strip: [bool, _NotProvided] = _NOT_PROVIDED,
     strip_args_factory = _NOT_PROVIDED,
+    separate_debug_info: [bool, _NotProvided] = _NOT_PROVIDED,
     import_library: [Artifact, None, _NotProvided] = _NOT_PROVIDED,
     allow_cache_upload: [bool, None, _NotProvided] = _NOT_PROVIDED,
     cxx_toolchain: [CxxToolchainInfo, _NotProvided] = _NOT_PROVIDED,
@@ -160,6 +169,7 @@ def merge_link_options(
         identifier = base.identifier if identifier == _NOT_PROVIDED else identifier,
         strip = base.strip if strip == _NOT_PROVIDED else strip,
         strip_args_factory = base.strip_args_factory if strip_args_factory == _NOT_PROVIDED else strip_args_factory,
+        separate_debug_info = base.separate_debug_info if separate_debug_info == _NOT_PROVIDED else separate_debug_info,
         import_library = base.import_library if import_library == _NOT_PROVIDED else import_library,
         allow_cache_upload = base.allow_cache_upload if allow_cache_upload == _NOT_PROVIDED else allow_cache_upload,
         cxx_toolchain = base.cxx_toolchain if cxx_toolchain == _NOT_PROVIDED else cxx_toolchain,
