@@ -253,7 +253,7 @@ def generate_rustdoc_coverage(
     use_cbp = getattr(ctx.attrs, "use_content_based_paths", False)
     output = ctx.actions.declare_output(file, has_content_based_path = use_cbp)
 
-    plain_env, path_env = process_env(compile_ctx, ctx.attrs.env)
+    plain_env, path_env = process_env(compile_ctx, toolchain_info.rustdoc_env | ctx.attrs.env)
     plain_env["RUSTDOC_BUCK_TARGET"] = cmd_args(str(ctx.label.raw_target()))
 
     if toolchain_info.rust_target_path != None:
@@ -473,7 +473,7 @@ def rustdoc_test_assembly(
         has_content_based_path = False,
     )
 
-    plain_env, path_env = process_env(compile_ctx, ctx.attrs.env)
+    plain_env, path_env = process_env(compile_ctx, toolchain_info.rustdoc_env | ctx.attrs.env)
     doc_plain_env, doc_path_env = process_env(compile_ctx, ctx.attrs.doc_env)
     for k, v in doc_plain_env.items():
         path_env.pop(k, None)
