@@ -9,7 +9,8 @@
 
 # A linker wrapper that links and splits debug info in one action. It takes the
 # real linker command line, which holds exactly one `-o <output>`, the path the
-# stripped binary goes to. rustc runs it as `-Clinker`. The wrapper links to a
+# stripped binary goes to. rustc runs it as `-Clinker`, and a cxx executable
+# link runs it around the linker command. The wrapper links to a
 # `$BUCK_SCRATCH_PATH` scratch path (the full-debug binary, never a Buck output,
 # so CAS does not store its DWARF), then:
 #   - objcopy --only-keep-debug  scratch -> the declared `.debuginfo` sidecar
