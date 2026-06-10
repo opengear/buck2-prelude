@@ -13,7 +13,7 @@ load(
     "apple_target_triple_flags",
     "is_valid_apple_platform_name",
 )
-load("@prelude//cxx:debug.bzl", "SplitDebugMode")
+load("@prelude//cxx:debug.bzl", "SplitDebugContainer", "SplitDebugMode")
 load("@prelude//target_stats:target_stats_tools.bzl", "TargetStatsToolsInfo")
 
 CXX_COMPILER_TYPES = ["clang", "clang_cl", "clang_windows", "gcc", "windows", "windows_ml64"]
@@ -354,6 +354,20 @@ def _validate_linker_info(info: LinkerInfo):
 
 def is_bitcode_format(format: CxxObjectFormat) -> bool:
     return format in [CxxObjectFormat("bitcode"), CxxObjectFormat("embedded-bitcode")]
+
+def get_split_debug_container(toolchain: CxxToolchainInfo) -> SplitDebugContainer:
+    # A split mode externalizes debug into `.dwo`/`.dwp` at codegen, so the
+    # linked binary has no inline DWARF to strip and that path owns delivery.
+    # Only an inline-DWARF binary is separated here, and the mechanism then
+    # follows the linker dialect.
+    if (toolchain.split_debug_mode or SplitDebugMode("none")) != SplitDebugMode("none"):
+        return SplitDebugContainer("none")
+    linker_type = toolchain.linker_info.type
+    if linker_type == LinkerType("gnu"):
+        return SplitDebugContainer("gnu_debuglink")
+    if linker_type == LinkerType("darwin"):
+        return SplitDebugContainer("dsym")
+    return SplitDebugContainer("none")
 
 def cxx_toolchain_infos(
     platform_name,
