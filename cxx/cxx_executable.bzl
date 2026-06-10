@@ -761,6 +761,7 @@ def cxx_executable(ctx: AnalysisContext, impl_params: CxxRuleConstructorParams, 
             enable_distributed_thinlto = ctx.attrs.enable_distributed_thinlto,
             strip = impl_params.strip_executable,
             strip_args_factory = impl_params.strip_args_factory,
+            separate_debug_info = impl_params.separate_debug_info,
             category_suffix = impl_params.exe_category_suffix,
             allow_cache_upload = impl_params.exe_allow_cache_upload,
             error_handler = impl_params.error_handler,
@@ -1006,15 +1007,20 @@ def cxx_executable(ctx: AnalysisContext, impl_params: CxxRuleConstructorParams, 
         with_inputs = True,
         has_content_based_path = False,
     )
-    sub_targets["debuginfo"] = [
-        DefaultInfo(
-            default_output = materialize_external_debug_info,
-        )
-    ]
+    if binary.debuginfo != None:
+        # The link action shipped the binary stripped with its DWARF in a
+        # `.debuginfo` gnu-debuglink sidecar; expose that sidecar directly.
+        sub_targets["debuginfo"] = [DefaultInfo(default_output = binary.debuginfo)]
+    else:
+        sub_targets["debuginfo"] = [
+            DefaultInfo(
+                default_output = materialize_external_debug_info,
+            ),
+        ]
     sub_targets["debug_coverage_instrumentation"] = [
         DefaultInfo(
             default_output = materialize_external_debug_info,
-        )
+        ),
     ]
 
     sub_targets["exe"] = [
