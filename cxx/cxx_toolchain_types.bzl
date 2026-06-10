@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 load("@prelude//cxx:cxx_apple_linker_flags.bzl", "apple_extra_darwin_linker_flags", "apple_format_target_triple", "is_valid_apple_platform_name")
-load("@prelude//cxx:debug.bzl", "SplitDebugMode")
+load("@prelude//cxx:debug.bzl", "SplitDebugContainer", "SplitDebugMode")
 
 LinkerType = enum("gnu", "darwin", "windows", "wasm")
 
@@ -316,6 +316,20 @@ def _validate_linker_info(info: LinkerInfo):
 
 def is_bitcode_format(format: CxxObjectFormat) -> bool:
     return format in [CxxObjectFormat("bitcode"), CxxObjectFormat("embedded-bitcode")]
+
+def get_split_debug_container(toolchain: CxxToolchainInfo) -> SplitDebugContainer:
+    # A split mode externalizes debug into `.dwo`/`.dwp` at codegen, so the
+    # linked binary has no inline DWARF to strip and that path owns delivery.
+    # Only an inline-DWARF binary is separated here, and the mechanism then
+    # follows the linker dialect.
+    if (toolchain.split_debug_mode or SplitDebugMode("none")) != SplitDebugMode("none"):
+        return SplitDebugContainer("none")
+    linker_type = toolchain.linker_info.type
+    if linker_type == LinkerType("gnu"):
+        return SplitDebugContainer("gnu_debuglink")
+    if linker_type == LinkerType("darwin"):
+        return SplitDebugContainer("dsym")
+    return SplitDebugContainer("none")
 
 def cxx_toolchain_infos(
     platform_name,
