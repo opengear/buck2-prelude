@@ -66,7 +66,14 @@ def _cxx_binary_and_test_attrs():
         "link_whole": attrs.default_only(attrs.bool(default = False)),
         "precompiled_header": attrs.option(attrs.dep(providers = [CPrecompiledHeaderInfo]), default = None),
         "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source(allow_directory = True)), sorted = True, default = []),
-        "separate_debug_info": attrs.bool(default = False),
+        "separate_debug_info": attrs.bool(default = False, doc = """
+            Ship this binary with its debug information separated out of band,
+            surfaced at the `[debuginfo]` sub-target. On a gnu toolchain with
+            `split_debug_mode = none` the link action strips the executable to a
+            `.debuginfo` gnu-debuglink sidecar; the full-debug binary is never a
+            declared output. With `split_debug_mode = split` it instead tracks
+            the per-object `.dwo` external debug info.
+        """),
         "_build_info": BUILD_INFO_ATTR,
         "_cxx_hacks": attrs.dep(default = "prelude//cxx/tools:cxx_hacks"),
         "_cxx_toolchain": toolchains_common.cxx(),
