@@ -22,3 +22,19 @@ SplitDebugMode = enum(
     # info (e.g. `dSYM`, `dwp`).
     "split",
 )
+
+# How a shipped binary's debug information is delivered out of band. Derived
+# from the toolchain (linker dialect plus `split_debug_mode`) by
+# `get_split_debug_container`, never set directly. `separate_debug_info` (a per-target
+# attr) is the intent ("separate my debug"); this names the mechanism that intent
+# resolves to for the target's binary format.
+SplitDebugContainer = enum(
+    # No out-of-band separation at the link/strip stage: either the intent is off
+    # or a split mode already externalizes the debug into `.dwo`/`.dwp`.
+    "none",
+    # ELF: strip the binary, moving its DWARF to a `.debuginfo` gnu-debuglink
+    # sidecar.
+    "gnu_debuglink",
+    # Mach-O: a UUID-matched `.dSYM` bundle from `-Csplit-debuginfo=packed`.
+    "dsym",
+)
