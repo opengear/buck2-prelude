@@ -359,7 +359,7 @@ def build_package(
         anon_targets_allowed = False,
     )
 
-    symabis = _symabis(actions, go_toolchain, params.pkg_import_path, params.main, go_version, s_files, go_list.h_files, params.assembler_flags)
+    symabis = _symabis(actions, go_toolchain, params.pkg_import_path, params.main, params.standard, go_version, s_files, go_list.h_files, params.assembler_flags)
 
     embedcfg = _embedcfg(actions, go_toolchain, params.pkg_import_path, params.package_root, params.embed_srcs, go_list.embed_patterns)
 
@@ -417,7 +417,7 @@ def build_package(
         )
 
         asm_o_files = _asssembly(
-            actions, go_toolchain, params.pkg_import_path, params.main, go_version, s_files, go_list.h_files, asmhdr, params.assembler_flags, shared, build_variant_id
+            actions, go_toolchain, params.pkg_import_path, params.main, params.standard, go_version, s_files, go_list.h_files, asmhdr, params.assembler_flags, shared, build_variant_id
         )
 
         return go_x_file, _pack(actions, go_toolchain, params.pkg_import_path, go_a_file, cgo_o_files + asm_o_files + go_list.syso_files, build_variant_id)
@@ -527,6 +527,7 @@ def _symabis(
     go_toolchain: GoToolchainInfo,
     pkg_import_path: str,
     main: bool,
+    standard: bool,
     go_version: GoVersion | None,
     s_files: list[Artifact],
     h_files: list[Artifact],
@@ -548,7 +549,7 @@ def _symabis(
         "--",
         go_toolchain.assembler_flags,
         assembler_flags,
-        _asm_args(go_toolchain, pkg_import_path, main, False, go_version),  # flag -shared doesn't matter for symabis
+        _asm_args(go_toolchain, pkg_import_path, main, False, standard, go_version),  # flag -shared doesn't matter for symabis
         "-gensymabis",
         ["-o", symabis.as_output()],
         ["-I", cmd_args(fake_asmhdr, parent = 1)],
@@ -567,6 +568,7 @@ def _asssembly(
     go_toolchain: GoToolchainInfo,
     pkg_import_path: str,
     main: bool,
+    standard: bool,
     go_version: GoVersion | None,
     s_files: list[Artifact],
     h_files: list[Artifact],
@@ -592,7 +594,7 @@ def _asssembly(
             "--",
             go_toolchain.assembler_flags,
             assembler_flags,
-            _asm_args(go_toolchain, pkg_import_path, main, shared, go_version),
+            _asm_args(go_toolchain, pkg_import_path, main, shared, standard, go_version),
             ["-o", o_file.as_output()],
             ["-I", cmd_args(asmhdr, parent = 1)] if asmhdr else [],  # can it actually be None?
             [cmd_args(h_files, parent = 1, prepend = "-I")] if h_files else [],
@@ -665,12 +667,12 @@ def _embedcfg(
 
     return embedcfg.with_associated_artifacts([srcs_dir])
 
-def _asm_args(go_toolchain: GoToolchainInfo, pkg_import_path: str, main: bool, shared: bool, go_version: GoVersion | None):
+def _asm_args(go_toolchain: GoToolchainInfo, pkg_import_path: str, main: bool, shared: bool, standard: bool, go_version: GoVersion | None):
     return [
         ["-p", "main" if main else pkg_import_path],
         ["-I", go_toolchain.env_go_root.project("pkg/include")] if go_toolchain.env_go_root else [],
         ["-D", "GOOS_" + go_toolchain.env_go_os] if go_toolchain.env_go_os else [],
         ["-D", "GOARCH_" + go_toolchain.env_go_arch] if go_toolchain.env_go_arch else [],
         ["-shared"] if shared else [],
-        ["-std"] if go_version and go_version.minor >= 27 else [],  # todo: safe to remove once go1.28 is released
+        ["-std"] if standard and go_version and go_version.minor >= 27 else [],  # todo: safe to remove once go1.28 is released
     ]
