@@ -22,6 +22,10 @@ GoDistrInfo = provider(
     },
 )
 
+# The token `go_wrapper` replaces with its working directory in its arguments.
+# Must equal the literal in go/tools/go_wrapper.go.
+GO_WRAPPER_CWD_PLACEHOLDER = "%cwd%"
+
 GoToolchainInfo = provider(
     # @unsorted-dict-items
     fields = {
