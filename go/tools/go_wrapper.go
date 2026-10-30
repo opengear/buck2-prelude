@@ -73,7 +73,7 @@ func main() {
 
 	absWrappedBinary, err := filepath.Abs(*wrappedBinary)
 	if err != nil {
-		log.Fatal("Failed to resolve wrapped binary: %s", err)
+		log.Fatalf("Resolving wrapped binary %q: %v", *wrappedBinary, err)
 	}
 
 	envs := make(map[string]string)
@@ -97,7 +97,7 @@ func main() {
 	if goroot != "" {
 		absGoroot, err := filepath.Abs(goroot)
 		if err != nil {
-			log.Fatal("Failed to resolve GOROOT: %s", err)
+			log.Fatalf("Resolving GOROOT %q: %v", goroot, err)
 		}
 		envs["GOROOT"] = absGoroot
 	}
@@ -105,7 +105,7 @@ func main() {
 	if buckScratchPath, ok := envs["BUCK_SCRATCH_PATH"]; ok {
 		absBuckScratchPath, err := filepath.Abs(buckScratchPath)
 		if err != nil {
-			log.Fatal("Failed to resolve BUCK_SCRATCH_PATH: %s", err)
+			log.Fatalf("Resolving BUCK_SCRATCH_PATH %q: %v", buckScratchPath, err)
 		}
 		envs["GOCACHE"] = absBuckScratchPath
 		envs["TMPDIR"] = absBuckScratchPath
@@ -113,7 +113,7 @@ func main() {
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		log.Fatal("Failed to get current working directory: %s", err)
+		log.Fatalf("Getting current working directory: %v", err)
 	}
 
 	for i, arg := range unknownArgs {
@@ -126,8 +126,7 @@ func main() {
 	} else {
 		output, err = os.Create(*outputFile)
 		if err != nil {
-			log.Fatalf("Error creating output file: %s", err)
-			os.Exit(1)
+			log.Fatalf("Creating output file %q: %v", *outputFile, err)
 		}
 		defer output.Close()
 	}
@@ -141,23 +140,23 @@ func main() {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Fatalf("Error creating stdout pipe: %s", err)
+		log.Fatalf("Creating stdout pipe: %v", err)
 	}
 	defer stdout.Close()
 
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		log.Fatalf("Error starting command: %s", err)
+		log.Fatalf("Starting %q: %v", absWrappedBinary, err)
 	}
 
 	if *convertJsonStream {
 		if err := jsonStreamToArray(stdout, output); err != nil {
-			log.Fatalf("Error converting json stream: %s", err)
+			log.Fatalf("Converting JSON stream: %v", err)
 		}
 	} else {
 		if _, err := io.Copy(output, stdout); err != nil {
-			log.Fatalf("Error copying stdout: %s", err)
+			log.Fatalf("Copying stdout: %v", err)
 		}
 	}
 
@@ -167,7 +166,7 @@ func main() {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
-		fmt.Fprintln(os.Stderr, "Error running command:", err)
+		fmt.Fprintf(os.Stderr, "Running %q: %v\n", absWrappedBinary, err)
 		os.Exit(exitCode)
 	}
 
@@ -177,7 +176,7 @@ func main() {
 			log.Fatalf("--gnu-build-id set but no -o output found in linker args: %v", unknownArgs)
 		}
 		if err := setGNUBuildID(out); err != nil {
-			log.Fatalf("Error setting GNU build id: %s", err)
+			log.Fatalf("Setting GNU build ID in %q: %v", out, err)
 		}
 	}
 }
