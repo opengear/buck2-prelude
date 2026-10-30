@@ -64,11 +64,35 @@ func main() {
 	var outputFile = flag.String("output", "", "file to redirect stdout to")
 	var convertJsonStream = flag.Bool("convert-json-stream", false, "convert json stream to array")
 	var gnuBuildID = flag.Bool("gnu-build-id", false, "rewrite .note.gnu.build-id with sha256 of the linked output (internal Go links only)")
+	var actionIDEnv = flag.String("action-id-env", "", "environment variable that holds the path of Buck2's action metadata. The wrapper passes the tool a -buildid. Its action ID is a hash of the metadata's input digests, the tool's arguments, the Go build variables and the --hash-env variables")
+	var buildIDTool = flag.String("buildid-tool", "", "path of the cmd/buildid binary; --main-export and --write-content-id run it")
+	var mainExport = flag.String("main-export", "", "export file of the main package in a link; the link's -buildid puts that file's build ID between two copies of the link's action ID")
+	var writeContentIDFlag = flag.Bool("write-content-id", false, "after the wrapped tool succeeds, cmd/buildid -w writes the -o output's content ID, the last part of its build ID")
+	var buildIDLdflags = flag.Bool("buildid-ldflags", false, "put -buildid at the front of the go build -ldflags value, which go build passes to its link. Needs --action-id-env. The go build arguments must hold exactly one -ldflags, and its value must lack a -buildid and must not take the per-package pattern=flags form")
+	var hashEnv []string
+	flag.Func("hash-env", "environment variable `NAME` whose value the wrapper hashes into the action ID with %cwd% unexpanded, then passes to the tool with %cwd% expanded. Repeat the flag for each variable. Each must be set, and the flag needs --action-id-env", func(name string) error {
+		hashEnv = append(hashEnv, name)
+		return nil
+	})
 	flag.Parse()
 	unknownArgs := flag.Args()
 
 	if *wrappedBinary == "" {
 		log.Fatal("No wrapped binary specified")
+	}
+	checked := buildIDFlags{
+		Placement:      buildIDLeadingArg,
+		HashEnv:        hashEnv,
+		ActionIDEnv:    *actionIDEnv,
+		MainExport:     *mainExport,
+		WriteContentID: *writeContentIDFlag,
+		BuildIDTool:    *buildIDTool,
+	}
+	if *buildIDLdflags {
+		checked.Placement = buildIDInLdflags
+	}
+	if err := checkBuildIDFlags(checked); err != nil {
+		log.Fatalf("Parsing flags: %v", err)
 	}
 
 	absWrappedBinary, err := filepath.Abs(*wrappedBinary)
@@ -111,13 +135,37 @@ func main() {
 		envs["TMPDIR"] = absBuckScratchPath
 	}
 
+	metadataPath := ""
+	if *actionIDEnv != "" {
+		metadataPath = envs[*actionIDEnv]
+		if metadataPath == "" {
+			log.Fatalf("Computing action ID: environment variable %q is unset or empty", *actionIDEnv)
+		}
+	}
+
+	mainBuildID := ""
+	if *mainExport != "" {
+		var err error
+		mainBuildID, err = readBuildID(*buildIDTool, *mainExport)
+		if err != nil {
+			log.Fatalf("Computing link build ID: %v", err)
+		}
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Fatalf("Getting current working directory: %v", err)
 	}
 
-	for i, arg := range unknownArgs {
-		unknownArgs[i] = strings.ReplaceAll(arg, "%cwd%", cwd)
+	unknownArgs, err = toolArgs(unknownArgs, buildIDInputs{
+		MetadataPath: metadataPath,
+		Env:          envs,
+		HashEnv:      checked.HashEnv,
+		MainBuildID:  mainBuildID,
+		Placement:    checked.Placement,
+	}, cwd)
+	if err != nil {
+		log.Fatalf("Composing tool arguments: %v", err)
 	}
 
 	var output *os.File
@@ -132,11 +180,7 @@ func main() {
 	}
 
 	cmd := exec.Command(absWrappedBinary, unknownArgs...)
-
-	cmd.Env = make([]string, 0, len(envs)/2)
-	for k, v := range envs {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = childEnv(envs, checked.HashEnv, cwd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -170,13 +214,20 @@ func main() {
 		os.Exit(exitCode)
 	}
 
-	if *gnuBuildID {
+	if *gnuBuildID || *writeContentIDFlag {
 		out := outputPath(unknownArgs)
 		if out == "" {
-			log.Fatalf("--gnu-build-id set but no -o output found in linker args: %v", unknownArgs)
+			log.Fatalf("Writing build IDs: the tool arguments %q lack an -o output", unknownArgs)
 		}
-		if err := setGNUBuildID(out); err != nil {
-			log.Fatalf("Setting GNU build ID in %q: %v", out, err)
+		if *gnuBuildID {
+			if err := setGNUBuildID(out); err != nil {
+				log.Fatalf("Setting GNU build ID in %q: %v", out, err)
+			}
+		}
+		if *writeContentIDFlag {
+			if err := writeContentID(*buildIDTool, out); err != nil {
+				log.Fatalf("Finishing link output %q: %v", out, err)
+			}
 		}
 	}
 }

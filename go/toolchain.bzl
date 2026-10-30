@@ -21,8 +21,11 @@ GoDistrInfo = provider(
     },
 )
 
-# The token `go_wrapper` replaces with its working directory in its arguments.
-# Must equal the literal in go/tools/go_wrapper.go.
+# The token `go_wrapper` replaces with its working directory in its arguments
+# and in the values of its `--hash-env` variables. `go_wrapper` computes the
+# action ID before it replaces the token. A path written with the token then
+# hashes the same in every action root. Must equal `cwdPlaceholder` in
+# go/tools/go_buildid.go.
 GO_WRAPPER_CWD_PLACEHOLDER = "%cwd%"
 
 GoToolchainInfo = provider(
@@ -31,6 +34,10 @@ GoToolchainInfo = provider(
         "allow_cache_upload": provider_field(bool | None, default = None),
         "assembler": provider_field(RunInfo),
         "assembler_flags": provider_field(typing.Any, default = []),
+        # cmd/buildid. The link runs it to read the main package's build ID
+        # and to write the binary's content ID. When unset, a binary's
+        # build ID is the link's action ID twice.
+        "buildid": provider_field(RunInfo | None, default = None),
         "cxx_compiler_flags": provider_field(typing.Any, default = []),
         "cgo": provider_field(RunInfo),
         "gen_embedcfg": provider_field(RunInfo),

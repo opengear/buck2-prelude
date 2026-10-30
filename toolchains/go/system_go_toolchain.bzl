@@ -59,6 +59,7 @@ def _system_go_toolchain_impl(ctx):
         GoToolchainInfo(
             allow_cache_upload = ctx.attrs.allow_cache_upload,
             assembler = RunInfo(cmd_script(ctx.actions, "asm", cmd_args(go, "tool", "asm"), script_language)),
+            buildid = RunInfo(cmd_script(ctx.actions, "buildid", cmd_args(go, "tool", "buildid"), script_language)),
             cgo = RunInfo(go_root.project(tool_prefix + "/cgo" + suffix)),
             pkg_analyzer = ctx.attrs.pkg_analyzer[RunInfo],
             gen_embedcfg = ctx.attrs.gen_embedcfg[RunInfo],

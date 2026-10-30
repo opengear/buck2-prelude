@@ -33,6 +33,7 @@ def _go_toolchain_impl(ctx):
             allow_cache_upload = ctx.attrs.allow_cache_upload,
             assembler = go_distr.tool_asm,
             assembler_flags = ctx.attrs.assembler_flags,
+            buildid = ctx.attrs.tool_buildid[RunInfo],
             cxx_compiler_flags = ctx.attrs.cxx_compiler_flags,
             cgo = go_distr.tool_cgo,
             compiler = go_distr.tool_compile,
@@ -83,6 +84,7 @@ go_toolchain = rule(
         "linker_flags": attrs.list(attrs.arg(), default = []),
         "pkg_analyzer": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:pkg_analyzer"),
         "race": attrs.bool(default = False),
+        "tool_buildid": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:tool_buildid"),
         "tool_pack": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:tool_pack"),
     },
 )
