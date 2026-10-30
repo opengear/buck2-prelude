@@ -130,7 +130,7 @@ def _cgo(
 
     # //line paths are resolved by the Go compiler against gen_dir.
     trimpath_replaces = cmd_args(
-        [cmd_args(cmd_args(src, format = "%cwd%/{}"), cmd_args(src, relative_to = (outs[names.cgo_gotypes], 1)), delimiter = "=>") for src in srcs],
+        [cmd_args(cmd_args(src, format = go_toolchain.go_wrapper_cwd_placeholder + "/{}"), cmd_args(src, relative_to = (outs[names.cgo_gotypes], 1)), delimiter = "=>") for src in srcs],
         delimiter = ";",
     )
 
@@ -141,7 +141,7 @@ def _cgo(
         cmd_args(outs[names.cgo_gotypes].as_output(), parent = 1, format = "-objdir={}", hidden = [out.as_output() for out in outs.values()]),
         ["-importpath", pkg_import_path],
         # todo: safe to remove once go1.28 is released
-        ["-trimpath", trimpath_replaces if go_toolchain.version and go_toolchain.version.minor >= 27 else "%cwd%"],
+        ["-trimpath", trimpath_replaces if go_toolchain.version and go_toolchain.version.minor >= 27 else go_toolchain.go_wrapper_cwd_placeholder],
         ["-import_runtime_cgo=false"] if unimport_runtime_cgo else [],
         ["-import_syscall=false"] if unimport_syscall else [],
         "--",

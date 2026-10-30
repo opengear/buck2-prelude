@@ -70,6 +70,7 @@ def _system_go_toolchain_impl(ctx):
             external_linker_flags = [],
             go = RunInfo(cmd_script(ctx.actions, "go", cmd_args(go), script_language)),
             go_wrapper = ctx.attrs.go_wrapper[RunInfo],
+            go_wrapper_cwd_placeholder = ctx.attrs.go_wrapper_cwd_placeholder,
             linker = RunInfo(cmd_script(ctx.actions, "link", cmd_args(go, "tool", "link"), script_language)),
             packer = RunInfo(cmd_script(ctx.actions, "pack", cmd_args(go, "tool", "pack"), script_language)),
             build_tags = [],
@@ -92,6 +93,9 @@ system_go_toolchain = rule(
         "copy_goroot": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:copy_goroot")),
         "gen_embedcfg": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:gen_embedcfg")),
         "go_wrapper": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:go_wrapper")),
+        # Must equal the token go/tools/go_wrapper.go replaces with its
+        # working directory.
+        "go_wrapper_cwd_placeholder": attrs.string(default = "%cwd%"),
         "pkg_analyzer": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:pkg_analyzer")),
     },
     is_toolchain_rule = True,

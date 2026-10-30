@@ -45,6 +45,7 @@ def _go_toolchain_impl(ctx):
             gen_embedcfg = ctx.attrs.gen_embedcfg[RunInfo],
             external_linker_flags = ctx.attrs.external_linker_flags,
             go_wrapper = ctx.attrs.go_wrapper[RunInfo],
+            go_wrapper_cwd_placeholder = ctx.attrs.go_wrapper_cwd_placeholder,
             cover = go_distr.tool_cover,
             go = go_distr.bin_go,
             env_go_arch = ctx.attrs.env_go_arch,
@@ -84,6 +85,9 @@ _go_toolchain = rule(
         "gen_embedcfg": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:gen_embedcfg"),
         "go_distr": attrs.exec_dep(providers = [GoDistrInfo]),
         "go_wrapper": attrs.exec_dep(providers = [RunInfo]),
+        # Must equal the token go/tools/go_wrapper.go replaces with its
+        # working directory.
+        "go_wrapper_cwd_placeholder": attrs.string(default = "%cwd%"),
         "linker_flags": attrs.list(attrs.arg(), default = []),
         "pkg_analyzer": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:pkg_analyzer"),
         "race": attrs.bool(default = False),

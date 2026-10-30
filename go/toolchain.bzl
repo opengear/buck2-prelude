@@ -32,6 +32,9 @@ GoToolchainInfo = provider(
         "cgo": provider_field(RunInfo),
         "gen_embedcfg": provider_field(RunInfo),
         "go_wrapper": provider_field(RunInfo),
+        # The token `go_wrapper` replaces with its working directory in its
+        # arguments.
+        "go_wrapper_cwd_placeholder": provider_field(str),
         "compiler": provider_field(RunInfo),
         "compiler_flags": provider_field(typing.Any, default = []),
         "pkg_analyzer": provider_field(RunInfo),

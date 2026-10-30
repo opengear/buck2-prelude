@@ -477,7 +477,7 @@ def _compile(
             "-buildid=",
             "-nolocalimports",
             "-pack",
-            ["-trimpath", "%cwd%"],
+            ["-trimpath", go_toolchain.go_wrapper_cwd_placeholder],
             ["-p", "main" if main else pkg_import_path],
             ["-importcfg", importcfg],
             ["-o", out_x.as_output()],
@@ -538,7 +538,7 @@ def _symabis(
         ["-I", cmd_args(fake_asmhdr, parent = 1)],
         [cmd_args(h_files, parent = 1, prepend = "-I")] if h_files else [],
         [cmd_args(s_files, parent = 1, prepend = "-I")],  # some .s files can include other .s files
-        ["-trimpath", "%cwd%"],
+        ["-trimpath", go_toolchain.go_wrapper_cwd_placeholder],
         s_files,
     ]
 
@@ -579,7 +579,7 @@ def _asssembly(
             ["-I", cmd_args(asmhdr, parent = 1)] if asmhdr else [],  # can it actually be None?
             [cmd_args(h_files, parent = 1, prepend = "-I")] if h_files else [],
             [cmd_args(s_files, parent = 1, prepend = "-I")],  # some .s files can include other .s files
-            ["-trimpath", "%cwd%"],
+            ["-trimpath", go_toolchain.go_wrapper_cwd_placeholder],
             s_file,
         ]
 
