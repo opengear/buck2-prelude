@@ -40,7 +40,12 @@ GoToolchainInfo = provider(
         "cover": provider_field(RunInfo),
         "env_go_arch": provider_field(str),
         "env_go_os": provider_field(str),
-        "env_go_arm": provider_field(str | None, default = None),
+        # The value cmd/go's cfg.GetArchEnv returns: the setting of the
+        # architecture-specific environment variable, such as GOAMD64 or
+        # GOARM64. arch_env_key names that variable for a GOARCH. When
+        # unset, the rules leave the variable out of the environment, and
+        # the Go tools use their own default.
+        "env_go_arch_env": provider_field(str | None, default = None),
         "env_go_root": provider_field(Artifact | None, default = None),
         "env_go_debug": provider_field(dict[str, str], default = {}),
         "env_go_experiment": provider_field(list[str], default = []),
@@ -60,6 +65,32 @@ GoToolchainInfo = provider(
     },
 )
 
+# The architecture-specific environment variable cmd/go's cfg.GetArchEnv
+# names for each GOARCH.
+_GO_ARCH_ENV_KEYS = {
+    "386": "GO386",
+    "amd64": "GOAMD64",
+    "arm": "GOARM",
+    "arm64": "GOARM64",
+    "mips": "GOMIPS",
+    "mipsle": "GOMIPS",
+    "mips64": "GOMIPS64",
+    "mips64le": "GOMIPS64",
+    "ppc64": "GOPPC64",
+    "ppc64le": "GOPPC64",
+    "riscv64": "GORISCV64",
+    "wasm": "GOWASM",
+}
+
+def arch_env_key(goarch: str) -> str:
+    """The architecture-specific environment variable cmd/go's
+    cfg.GetArchEnv names for goarch. Fails, naming goarch, for a GOARCH
+    outside _GO_ARCH_ENV_KEYS.
+    """
+    if goarch not in _GO_ARCH_ENV_KEYS:
+        fail("Looking up the architecture-specific environment variable: cmd/go defines none for GOARCH '{}'; it defines one for {}".format(goarch, ", ".join(sorted(_GO_ARCH_ENV_KEYS))))
+    return _GO_ARCH_ENV_KEYS[goarch]
+
 def get_toolchain_env_vars(toolchain: GoToolchainInfo) -> dict[str, str | cmd_args | Artifact]:
     env = {
         "GOARCH": toolchain.env_go_arch,
@@ -67,8 +98,8 @@ def get_toolchain_env_vars(toolchain: GoToolchainInfo) -> dict[str, str | cmd_ar
         "GOOS": toolchain.env_go_os,
     }
 
-    if toolchain.env_go_arm != None:
-        env["GOARM"] = toolchain.env_go_arm
+    if toolchain.env_go_arch_env != None:
+        env[arch_env_key(toolchain.env_go_arch)] = toolchain.env_go_arch_env
     if toolchain.env_go_debug:
         godebug = ",".join(["{}={}".format(k, v) for k, v in toolchain.env_go_debug.items()])
         env["GODEBUG"] = godebug

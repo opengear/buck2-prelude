@@ -667,12 +667,63 @@ def _embedcfg(
 
     return embedcfg.with_associated_artifacts([srcs_dir])
 
+# Versions `go tool asm` accepts for GOARM64, after stripping ,lse and
+# ,crypto: v8.0 through v8.9, or v9.0 through v9.5 (ParseGoarm64 in
+# internal/buildcfg/cfg.go).
+_GOARM64_VERSIONS = ["v8.{}".format(i) for i in range(10)] + ["v9.{}".format(i) for i in range(6)]
+
+def _arch_env_defines(go_toolchain: GoToolchainInfo) -> list[str]:
+    """`-D` defines for the architecture-specific environment variable,
+    mirroring `asmArgs` in `cmd/go/internal/work/gc.go`. An unset variable
+    takes the default of a stock Go release (internal/buildcfg
+    zbootstrap.go).
+    """
+    arch = go_toolchain.env_go_arch
+    arch_env = go_toolchain.env_go_arch_env
+    if arch == "386":
+        return ["-D", "GO386_{}".format(arch_env or "sse2")]
+    if arch == "amd64":
+        return ["-D", "GOAMD64_{}".format(arch_env or "v1")]
+    if arch == "arm":
+        goarm = arch_env or "7"
+        if "7" in goarm:
+            return ["-D", "GOARM_7", "-D", "GOARM_6", "-D", "GOARM_5"]
+        if "6" in goarm:
+            return ["-D", "GOARM_6", "-D", "GOARM_5"]
+        return ["-D", "GOARM_5"]
+    if arch == "arm64":
+        # ParseGoarm64 takes ,lse and ,crypto in either order and sets
+        # LSE for every version after v8.0.
+        value = arch_env or "v8.0"
+        lse = ",lse" in value
+        version = value.replace(",lse", "").replace(",crypto", "")
+        if version not in _GOARM64_VERSIONS:
+            fail("Computing the assembler's architecture-specific defines: GOARM64 value '{}' is not accepted; Go accepts v8.0 through v8.9 or v9.0 through v9.5, optionally followed by ,lse, ,crypto, or both".format(value))
+        if version != "v8.0":
+            lse = True
+        return ["-D", "GOARM64_LSE"] if lse else []
+    if arch in ("mips", "mipsle"):
+        return ["-D", "GOMIPS_{}".format(arch_env or "hardfloat")]
+    if arch in ("mips64", "mips64le"):
+        return ["-D", "GOMIPS64_{}".format(arch_env or "hardfloat")]
+    if arch in ("ppc64", "ppc64le"):
+        power = arch_env or "power8"
+        if power == "power10":
+            return ["-D", "GOPPC64_power10", "-D", "GOPPC64_power9", "-D", "GOPPC64_power8"]
+        if power == "power9":
+            return ["-D", "GOPPC64_power9", "-D", "GOPPC64_power8"]
+        return ["-D", "GOPPC64_power8"]
+    if arch == "riscv64":
+        return ["-D", "GORISCV64_{}".format(arch_env or "rva20u64")]
+    return []
+
 def _asm_args(go_toolchain: GoToolchainInfo, pkg_import_path: str, main: bool, shared: bool, standard: bool, go_version: GoVersion | None):
     return [
         ["-p", "main" if main else pkg_import_path],
         ["-I", go_toolchain.env_go_root.project("pkg/include")] if go_toolchain.env_go_root else [],
         ["-D", "GOOS_" + go_toolchain.env_go_os] if go_toolchain.env_go_os else [],
         ["-D", "GOARCH_" + go_toolchain.env_go_arch] if go_toolchain.env_go_arch else [],
+        _arch_env_defines(go_toolchain),
         ["-shared"] if shared else [],
         ["-std"] if standard and go_version and go_version.minor >= 27 else [],  # todo: safe to remove once go1.28 is released
     ]
