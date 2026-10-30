@@ -8,6 +8,10 @@
 
 load("@prelude//:paths.bzl", "paths")
 load(
+    ":toolchain.bzl",
+    "GoToolchainInfo",
+)
+load(
     ":packages.bzl",
     "GoPkg",  # @Unused used as type
     "merge_pkgs",
@@ -49,3 +53,39 @@ def infer_package_root(srcs: list[Artifact]) -> str:
         )
 
     return list(dir_set)[0]
+
+def trimpath_spec(go_toolchain: GoToolchainInfo, srcs: list[Artifact], pkg_import_path: str, gen_dir: Artifact | None = None) -> cmd_args:
+    """The `-trimpath` rewrites for one package, in the grammar of
+    `cmd/internal/objabi` `ApplyRewrites`, where the first matching rule
+    wins. `gen_dir` is the directory of cgo's generated files, and its
+    rules come first. Under them a generated file keeps only its base
+    name, and a `//line` path that the compiler joined onto `gen_dir`
+    loses that prefix. A tool records every other source as
+    `<pkg_import_path>/<file>`, the form `go build -trimpath` writes,
+    whichever directory the source is in: a package can list checked-in
+    and generated files together. `go_wrapper` replaces the toolchain's
+    `go_wrapper_cwd_placeholder` token with the working directory's
+    absolute path, and the last rule trims that prefix from any remaining
+    file. Fails, naming pkg_import_path, when srcs is empty."""
+    if len(srcs) == 0:
+        fail("Composing -trimpath for package '{}': the tool run lists no sources".format(pkg_import_path))
+
+    cwd = go_toolchain.go_wrapper_cwd_placeholder
+    rules = []
+    if gen_dir:
+        rules.append(cmd_args(cwd, "/", gen_dir, "=>", delimiter = ""))
+        rules.append(cmd_args(gen_dir, "=>", delimiter = ""))
+
+    gen_key = (False, str(gen_dir.owner), gen_dir.short_path) if gen_dir else None
+    first_src_by_dir = {}
+    dirs_in_order = []
+    for src in srcs:
+        key = (src.is_source, str(src.owner) if src.owner else "", paths.dirname(src.short_path))
+        if key == gen_key or key in first_src_by_dir:
+            continue
+        first_src_by_dir[key] = src
+        dirs_in_order.append(key)
+
+    rules.extend([cmd_args(cwd, "/", cmd_args(first_src_by_dir[key], parent = 1), "=>", pkg_import_path, delimiter = "") for key in dirs_in_order])
+    rules.append(cwd)
+    return cmd_args(rules, delimiter = ";")

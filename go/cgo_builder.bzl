@@ -31,6 +31,7 @@ load("@prelude//cxx:target_sdk_version.bzl", "get_target_sdk_version_flags")
 load("@prelude//linking:types.bzl", "Linkage")
 load("@prelude//os_lookup:defs.bzl", "OsLookup")
 load("@prelude//utils:cmd_script.bzl", "cmd_script")
+load(":compile.bzl", "trimpath_spec")
 load(":toolchain.bzl", "GoToolchainInfo", "get_toolchain_env_vars")
 
 CGoToolOut = record(
@@ -128,20 +129,13 @@ def _cgo(
     unimport_runtime_cgo = standard and pkg_import_path == "runtime/cgo"
     unimport_syscall = standard and pkg_import_path in _syscall_import_exclude_list
 
-    # //line paths are resolved by the Go compiler against gen_dir.
-    trimpath_replaces = cmd_args(
-        [cmd_args(cmd_args(src, format = go_toolchain.go_wrapper_cwd_placeholder + "/{}"), cmd_args(src, relative_to = (outs[names.cgo_gotypes], 1)), delimiter = "=>") for src in srcs],
-        delimiter = ";",
-    )
-
     cmd = cmd_args(
         go_toolchain.go_wrapper,
         ["--go", go_toolchain.cgo],
         "--",
         cmd_args(outs[names.cgo_gotypes].as_output(), parent = 1, format = "-objdir={}", hidden = [out.as_output() for out in outs.values()]),
         ["-importpath", pkg_import_path],
-        # todo: safe to remove once go1.28 is released
-        ["-trimpath", trimpath_replaces if go_toolchain.version and go_toolchain.version.minor >= 27 else go_toolchain.go_wrapper_cwd_placeholder],
+        ["-trimpath", trimpath_spec(go_toolchain, srcs, pkg_import_path)],
         ["-import_runtime_cgo=false"] if unimport_runtime_cgo else [],
         ["-import_syscall=false"] if unimport_syscall else [],
         "--",

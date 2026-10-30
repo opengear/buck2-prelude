@@ -13,7 +13,7 @@ load(
     "CGoBuildContext",  # @Unused used as type
     "build_cgo",
 )
-load(":compile.bzl", "get_inherited_compile_pkgs", "infer_package_root")
+load(":compile.bzl", "get_inherited_compile_pkgs", "infer_package_root", "trimpath_spec")
 load(
     ":coverage.bzl",
     "GoCoverageMode",  # @Unused used as type
@@ -385,6 +385,7 @@ def build_package(
             actions = actions,
             go_toolchain = go_toolchain,
             pkg_import_path = params.pkg_import_path,
+            cgo_gen_dir = cgo_gen_dir if len(go_list.cgo_files) > 0 else None,
             main = params.main,
             go_srcs = go_files_to_compile,
             srcs_argsfile = srcs_argsfile,
@@ -440,6 +441,7 @@ def _compile(
     actions: AnalysisActions,
     go_toolchain: GoToolchainInfo,
     pkg_import_path: str,
+    cgo_gen_dir: Artifact | None,
     main: bool,
     go_srcs: list[Artifact],
     srcs_argsfile: Artifact | None,
@@ -477,7 +479,7 @@ def _compile(
             "-buildid=",
             "-nolocalimports",
             "-pack",
-            ["-trimpath", go_toolchain.go_wrapper_cwd_placeholder],
+            ["-trimpath", trimpath_spec(go_toolchain, go_srcs, pkg_import_path, cgo_gen_dir)],
             ["-p", "main" if main else pkg_import_path],
             ["-importcfg", importcfg],
             ["-o", out_x.as_output()],
@@ -538,7 +540,7 @@ def _symabis(
         ["-I", cmd_args(fake_asmhdr, parent = 1)],
         [cmd_args(h_files, parent = 1, prepend = "-I")] if h_files else [],
         [cmd_args(s_files, parent = 1, prepend = "-I")],  # some .s files can include other .s files
-        ["-trimpath", go_toolchain.go_wrapper_cwd_placeholder],
+        ["-trimpath", trimpath_spec(go_toolchain, s_files, pkg_import_path)],
         s_files,
     ]
 
@@ -562,6 +564,7 @@ def _asssembly(
         return []
 
     env = get_toolchain_env_vars(go_toolchain)
+    trimpath = trimpath_spec(go_toolchain, s_files, pkg_import_path)
 
     o_files = []
     for s_file in s_files:
@@ -579,7 +582,7 @@ def _asssembly(
             ["-I", cmd_args(asmhdr, parent = 1)] if asmhdr else [],  # can it actually be None?
             [cmd_args(h_files, parent = 1, prepend = "-I")] if h_files else [],
             [cmd_args(s_files, parent = 1, prepend = "-I")],  # some .s files can include other .s files
-            ["-trimpath", go_toolchain.go_wrapper_cwd_placeholder],
+            ["-trimpath", trimpath],
             s_file,
         ]
 
