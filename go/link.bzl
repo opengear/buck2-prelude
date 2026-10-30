@@ -41,6 +41,7 @@ load(
     "make_link_importcfg",
     "merge_pkgs",
 )
+load(":compile.bzl", "ACTION_METADATA_ENV")
 load(":toolchain.bzl", "GoToolchainInfo", "get_toolchain_env_vars")
 
 # Provider wrapping packages used for linking.
@@ -141,25 +142,25 @@ def link(
     final_output_name = ctx.label.name + file_extension
     output = ctx.actions.declare_output(ctx.label.name + "-tmp" + file_extension, has_content_based_path = True)
 
-    cmd = cmd_args()
-
-    cmd.add(go_toolchain.go_wrapper)
-    cmd.add(["--go", go_toolchain.linker])
-
     # Give internally-linked Go binaries a content-hash NT_GNU_BUILD_ID note.
     # Buck has no artifact content at analysis time, so reserve a zeroed note here
     # (-B 0x00..00) that the wrapper fills with sha256 post-link -- rewriting only a
     # still-all-zero descriptor, so an external link keeps its C++-set build-id.
     elf_go_os = ["linux", "android", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "solaris"]
     emit_build_id = build_mode in [GoBuildMode("exe"), GoBuildMode("pie")] and link_mode in [None, "internal"] and go_toolchain.env_go_os in elf_go_os
-    if emit_build_id:
-        cmd.add("--gnu-build-id")  # wrapper flag, must precede "--"
 
-    cmd.add("--")
+    buildid_tool = go_toolchain.buildid
+
+    wrapper = cmd_args(go_toolchain.go_wrapper)
+    wrapper.add(["--go", go_toolchain.linker])
+    if emit_build_id:
+        wrapper.add("--gnu-build-id")
+    wrapper.add(["--action-id-env", ACTION_METADATA_ENV])
+
+    cmd = cmd_args()
     cmd.add(go_toolchain.linker_flags)
 
     cmd.add("-buildmode=" + _build_mode_param(build_mode))
-    cmd.add("-buildid=")  # Setting to a static buildid helps make the binary reproducible.
     if emit_build_id:
         cmd.add("-B", "0x" + "00" * 20)  # reserve a 20-byte NT_GNU_BUILD_ID slot in PT_NOTE
 
@@ -271,10 +272,13 @@ def link(
         _link(
             go_stdlib_value = go_stdlib.dynamic_value,
             env_vars = env,
+            wrapper = wrapper,
             link_args = cmd,
             main_pkg = main,
             deps_pkgs = all_pkgs,
             shared = use_shared_code,
+            build_mode = build_mode,
+            buildid_tool = buildid_tool,
             identifier = identifier_prefix,
             out = output.as_output(),
             allow_cache_upload = go_toolchain.allow_cache_upload,
@@ -296,10 +300,13 @@ def _link_impl(
     actions: AnalysisActions,
     go_stdlib_value: ResolvedDynamicValue,
     env_vars: dict[str, str | cmd_args | Artifact],
+    wrapper: cmd_args,
     link_args: cmd_args,
     main_pkg: GoPkg,
     deps_pkgs: dict[str, GoPkg],
     shared: bool,
+    build_mode: GoBuildMode,
+    buildid_tool: RunInfo | None,
     identifier: str,
     out: OutputArtifact,
     allow_cache_upload: bool | None,
@@ -309,14 +316,35 @@ def _link_impl(
     deps = merge_pkgs([go_stdlib_value.pkgs, deps_pkgs])
     importcfg = make_link_importcfg(actions, deps, shared)
     main_pkg_o = main_pkg.archive_file_shared if shared else main_pkg.archive_file
+    main_pkg_x = main_pkg.export_file_shared if shared else main_pkg.export_file
+
+    buildid_flags = [
+        ["--buildid-tool", buildid_tool],
+        ["--main-export", main_pkg_x],
+        # A c-archive keeps the action ID in the content ID's place. `go tool
+        # buildid -w` reads a file's build ID before it writes the content ID,
+        # and it cannot read an ar archive of host objects.
+        ["--write-content-id"] if build_mode != GoBuildMode("c_archive") else [],
+    ] if buildid_tool else []
 
     cmd = [
+        wrapper,
+        buildid_flags,
+        "--",
         link_args,
         ["-importcfg", importcfg],
         ["-o", out],
         main_pkg_o,
     ]
-    actions.run(cmd, env = env_vars, category = "go_link", identifier = identifier, allow_cache_upload = allow_cache_upload)
+    actions.run(
+        cmd,
+        env = env_vars,
+        category = "go_link",
+        identifier = identifier,
+        allow_cache_upload = allow_cache_upload,
+        metadata_env_var = ACTION_METADATA_ENV,
+        metadata_path = "action_metadata.json",
+    )
     return []
 
 _link = dynamic_actions(
@@ -325,10 +353,13 @@ _link = dynamic_actions(
     attrs = {
         "go_stdlib_value": dynattrs.dynamic_value(),  # GoStdlibDynamicValue
         "env_vars": dynattrs.value(dict[str, str | cmd_args | Artifact]),
+        "wrapper": dynattrs.value(cmd_args),
         "link_args": dynattrs.value(cmd_args),
         "main_pkg": dynattrs.value(GoPkg),
         "deps_pkgs": dynattrs.value(dict[str, GoPkg]),
         "shared": dynattrs.value(bool),
+        "build_mode": dynattrs.value(GoBuildMode),
+        "buildid_tool": dynattrs.value(RunInfo | None),
         "identifier": dynattrs.value(str),
         "out": dynattrs.output(),
         "allow_cache_upload": dynattrs.value(bool | None),

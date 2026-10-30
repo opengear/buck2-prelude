@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -113,9 +114,41 @@ func TestOutputPath(t *testing.T) {
 		{[]string{"main.o", "-o"}, ""}, // dangling -o must not panic
 		// A stray -o in user linker_flags must not win over _link_impl's trailing -o.
 		{[]string{"-o", "stray", "-buildmode=exe", "-o", "out/bin", "main.o"}, "out/bin"},
+		{[]string{"-buildmode=exe", "-o=out/bin", "main.o"}, "out/bin"},
+		{[]string{"-buildmode=exe", "--o", "out/bin", "main.o"}, "out/bin"},
 	} {
 		if got := outputPath(tc.args); got != tc.want {
 			t.Errorf("outputPath(%v) = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestScanFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		flagName string
+		args     []string
+		want     []flagOccurrence
+	}{
+		{"-name V", "o", []string{"-trimpath", "-o", "out", "main.o"}, []flagOccurrence{{1, flagValueNext, "out"}}},
+		{"-name=V", "o", []string{"-o=out"}, []flagOccurrence{{0, flagValueAttached, "out"}}},
+		{"--name V", "o", []string{"--o", "out"}, []flagOccurrence{{0, flagValueNext, "out"}}},
+		{"--name=V", "o", []string{"--o=out"}, []flagOccurrence{{0, flagValueAttached, "out"}}},
+		{"empty value after =", "o", []string{"-o="}, []flagOccurrence{{0, flagValueAttached, ""}}},
+		{"value holding =", "ldflags", []string{"-ldflags=-X main.v=1"}, []flagOccurrence{{0, flagValueAttached, "-X main.v=1"}}},
+		{"last argument without a value", "o", []string{"main.o", "-o"}, []flagOccurrence{{1, flagValueAbsent, ""}}},
+		{"value that reads like the flag", "o", []string{"-o", "-o", "main.o"}, []flagOccurrence{{0, flagValueNext, "-o"}}},
+		{
+			"each occurrence in order",
+			"o",
+			[]string{"-o", "a", "-buildmode=exe", "--o=b"},
+			[]flagOccurrence{{0, flagValueNext, "a"}, {3, flagValueAttached, "b"}},
+		},
+		{"flags whose names start with the name", "o", []string{"-out", "x", "-output=y", "-oo"}, nil},
+		{"flag absent", "o", []string{"main.o"}, nil},
+	} {
+		if got := scanFlag(tc.args, tc.flagName); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: scanFlag(%q, %q) = %v, want %v", tc.name, tc.args, tc.flagName, got, tc.want)
 		}
 	}
 }
@@ -177,11 +210,8 @@ func craftELFWithZeroNote(descLen int) []byte {
 
 func TestFindAndSetBuildIDNote(t *testing.T) {
 	const descLen = 20
-	path := filepath.Join(t.TempDir(), "bin")
 	orig := craftELFWithZeroNote(descLen)
-	if err := os.WriteFile(path, orig, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	path := writeTempFile(t, "bin", orig)
 
 	descOff, gotLen, err := findBuildIDNote(path)
 	if err != nil {
@@ -230,10 +260,7 @@ func TestFindAndSetBuildIDNote(t *testing.T) {
 // TestFindBuildIDNoteNonELF confirms a non-ELF output (e.g. a wasm target that
 // passed the gate) is a clean skip, not an error.
 func TestFindBuildIDNoteNonELF(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "not-elf")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	path := writeTempFile(t, "not-elf", []byte("#!/bin/sh\necho hi\n"))
 	descOff, descLen, err := findBuildIDNote(path)
 	if err != nil || descOff != 0 || descLen != 0 {
 		t.Fatalf("findBuildIDNote(non-ELF) = (%d,%d,%v), want (0,0,nil)", descOff, descLen, err)
@@ -251,10 +278,7 @@ func TestFindBuildIDNoteMissingFile(t *testing.T) {
 // TestFindBuildIDNoteCorruptELF confirms an output with ELF magic that fails to
 // parse is a real error, not silently skipped like a genuine non-ELF file.
 func TestFindBuildIDNoteCorruptELF(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "corrupt")
-	if err := os.WriteFile(path, append([]byte(elf.ELFMAG), 0, 0, 0, 0), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	path := writeTempFile(t, "corrupt", append([]byte(elf.ELFMAG), 0, 0, 0, 0))
 	if _, _, err := findBuildIDNote(path); err == nil {
 		t.Fatal("findBuildIDNote(corrupt ELF) = nil error, want non-nil (must not swallow corrupt output)")
 	}
@@ -266,10 +290,7 @@ func TestFindBuildIDNoteDescriptorOverrun(t *testing.T) {
 	buf := craftELFWithZeroNote(20)
 	// Corrupt descsz (2nd u32 of the note header, at file offset 64+4) to overrun.
 	binary.LittleEndian.PutUint32(buf[64+4:], 1<<20)
-	path := filepath.Join(t.TempDir(), "overrun")
-	if err := os.WriteFile(path, buf, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	path := writeTempFile(t, "overrun", buf)
 	if _, _, err := findBuildIDNote(path); err == nil {
 		t.Fatal("findBuildIDNote(oversized descsz) = nil error, want non-nil (descriptor overruns section)")
 	}
@@ -282,10 +303,7 @@ func TestFindBuildIDNoteDescriptorOverrun(t *testing.T) {
 func TestFindBuildIDNoteTruncatedNote(t *testing.T) {
 	buf := craftELFWithZeroNote(20)
 	binary.LittleEndian.PutUint64(buf[226:], 14) // shrink note section below the 16-byte name end
-	path := filepath.Join(t.TempDir(), "trunc")
-	if err := os.WriteFile(path, buf, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	path := writeTempFile(t, "trunc", buf)
 	if _, _, err := findBuildIDNote(path); err == nil {
 		t.Fatal("findBuildIDNote(truncated note) = nil error, want non-nil (corrupt note, not skip)")
 	}

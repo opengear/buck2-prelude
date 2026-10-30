@@ -36,6 +36,11 @@ GoTestInfo = provider(
     },
 )
 
+# Name of the environment variable that Buck2 sets to the path of a
+# compile or link action's metadata. `go_wrapper` hashes the metadata's
+# input digests into the action ID of the output's build ID.
+ACTION_METADATA_ENV = "ACTION_METADATA"
+
 def get_inherited_compile_pkgs(deps: list[Dependency]) -> dict[str, GoPkg]:
     return merge_pkgs([d[GoPkgCompileInfo].pkgs for d in deps if GoPkgCompileInfo in d])
 

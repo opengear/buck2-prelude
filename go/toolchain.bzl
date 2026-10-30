@@ -27,12 +27,19 @@ GoToolchainInfo = provider(
         "allow_cache_upload": provider_field(bool | None, default = None),
         "assembler": provider_field(RunInfo),
         "assembler_flags": provider_field(typing.Any, default = []),
+        # cmd/buildid. The link runs it to read the main package's build ID
+        # and to write the binary's content ID. When unset, a binary's
+        # build ID is the link's action ID twice.
+        "buildid": provider_field(RunInfo | None, default = None),
         "cxx_compiler_flags": provider_field(typing.Any, default = []),
         "cgo": provider_field(RunInfo),
         "gen_embedcfg": provider_field(RunInfo),
         "go_wrapper": provider_field(RunInfo),
         # The token `go_wrapper` replaces with its working directory in its
-        # arguments.
+        # arguments and in the values of its `--hash-env` variables.
+        # `go_wrapper` computes the action ID before it replaces the token.
+        # A path written with the token then hashes the same in every action
+        # root.
         "go_wrapper_cwd_placeholder": provider_field(str),
         "compiler": provider_field(RunInfo),
         "compiler_flags": provider_field(typing.Any, default = []),

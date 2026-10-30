@@ -12,6 +12,14 @@ prelude.go_stdlib(
 )
 
 prelude.go_bootstrap_binary(
+    name = "tool_buildid",
+    build_args = [
+        "cmd/buildid",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+prelude.go_bootstrap_binary(
     name = "tool_pack",
     build_args = [
         "cmd/pack",
@@ -23,10 +31,12 @@ prelude.go_bootstrap_binary(
     name = "go_wrapper",
     srcs = [
         "buildid.go",
+        "go_buildid.go",
         "go_wrapper.go",
     ],
     build_args = [
         "buildid.go",
+        "go_buildid.go",
         "go_wrapper.go",
     ],
     visibility = ["PUBLIC"],
@@ -89,5 +99,14 @@ prelude.go_bootstrap_binary(
 
 prelude.go_test(
     name = "buildid_test",
-    srcs = ["buildid.go", "buildid_test.go"],
+    srcs = [
+        "buildid.go",
+        "buildid_test.go",
+        "go_buildid.go",
+        "go_buildid_test.go",
+        "go_wrapper.go",
+    ],
+    env = {
+        "GO_BUILDID_TOOL": "$(location :tool_buildid)",
+    },
 )

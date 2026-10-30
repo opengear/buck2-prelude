@@ -16,19 +16,68 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // ntGNUBuildID is the NT_GNU_BUILD_ID note type. debug/elf does not export it.
 const ntGNUBuildID = 3
 
-// outputPath returns the linker's -o value. _link_impl (link.bzl) appends the
-// authoritative "-o <out>" after any user linker_flags, so return the LAST "-o"
-// to avoid picking up a stray one from user-supplied flags.
+// flagValueForm is the way one occurrence of a Go flag passes its value.
+type flagValueForm int
+
+const (
+	// flagValueNext is the "-name V" form: the value is the next argument.
+	flagValueNext flagValueForm = iota
+	// flagValueAttached is the "-name=V" form.
+	flagValueAttached
+	// flagValueAbsent is "-name" as the last argument, without a value.
+	flagValueAbsent
+)
+
+// flagOccurrence is one occurrence of a Go flag in an argument list.
+type flagOccurrence struct {
+	// Index is the position of the flag's own argument.
+	Index int
+	Form  flagValueForm
+	Value string
+}
+
+// scanFlag returns each occurrence of the Go flag called name in args, in
+// order, including those after the first positional argument. The
+// spellings are -name V, -name=V, --name V and --name=V. The scan skips the
+// value argument of a "-name V" occurrence, even when that value starts
+// with a dash.
+func scanFlag(args []string, name string) []flagOccurrence {
+	var found []flagOccurrence
+	for i := 0; i < len(args); i++ {
+		if !strings.HasPrefix(args[i], "-") {
+			continue
+		}
+		flagName, value, attached := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(args[i], "-"), "-"), "=")
+		if flagName != name {
+			continue
+		}
+		switch {
+		case attached:
+			found = append(found, flagOccurrence{i, flagValueAttached, value})
+		case i+1 < len(args):
+			found = append(found, flagOccurrence{i, flagValueNext, args[i+1]})
+			i++
+		default:
+			found = append(found, flagOccurrence{i, flagValueAbsent, ""})
+		}
+	}
+	return found
+}
+
+// outputPath returns the -o value of a link or a go build command. The last
+// -o with a value wins. In a link, _link_impl (link.bzl) appends its
+// "-o <out>" after the user's linker_flags, which may hold a stray -o.
 func outputPath(args []string) string {
 	out := ""
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-o" {
-			out = args[i+1]
+	for _, occurrence := range scanFlag(args, "o") {
+		if occurrence.Form != flagValueAbsent {
+			out = occurrence.Value
 		}
 	}
 	return out

@@ -37,6 +37,7 @@ def _go_toolchain_impl(ctx):
             allow_cache_upload = ctx.attrs.allow_cache_upload,
             assembler = go_distr.tool_asm,
             assembler_flags = ctx.attrs.assembler_flags,
+            buildid = ctx.attrs.tool_buildid[RunInfo],
             cxx_compiler_flags = ctx.attrs.cxx_compiler_flags,
             cgo = go_distr.tool_cgo,
             compiler = go_distr.tool_compile,
@@ -85,8 +86,8 @@ _go_toolchain = rule(
         "gen_embedcfg": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:gen_embedcfg"),
         "go_distr": attrs.exec_dep(providers = [GoDistrInfo]),
         "go_wrapper": attrs.exec_dep(providers = [RunInfo]),
-        # Must equal the token go/tools/go_wrapper.go replaces with its
-        # working directory.
+        # Must equal cwdPlaceholder in go/tools/go_buildid.go, the token
+        # go_wrapper replaces with its working directory.
         "go_wrapper_cwd_placeholder": attrs.string(default = "%cwd%"),
         "linker_flags": attrs.list(attrs.arg(), default = []),
         "pkg_analyzer": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:pkg_analyzer"),
@@ -96,6 +97,7 @@ _go_toolchain = rule(
         # than on the execution platform.
         "run_go_distr": attrs.option(attrs.dep(providers = [GoDistrInfo]), default = None),
         "run_go_wrapper": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
+        "tool_buildid": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:tool_buildid"),
         "tool_pack": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:tool_pack"),
     },
 )

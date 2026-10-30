@@ -13,7 +13,7 @@ load(
     "CGoBuildContext",  # @Unused used as type
     "build_cgo",
 )
-load(":compile.bzl", "get_inherited_compile_pkgs", "infer_package_root", "trimpath_spec")
+load(":compile.bzl", "ACTION_METADATA_ENV", "get_inherited_compile_pkgs", "infer_package_root", "trimpath_spec")
 load(
     ":coverage.bzl",
     "GoCoverageMode",  # @Unused used as type
@@ -486,10 +486,14 @@ def _compile(
         [
             go_toolchain.go_wrapper,
             ["--go", go_toolchain.compiler],
+            # The compile records the build ID `<A>/<A>`, with the action ID
+            # in both halves. cmd/go puts a content hash in the second half
+            # for its own build cache. Here the link reads this ID from the
+            # main package's export file and places it in the binary's ID.
+            ["--action-id-env", ACTION_METADATA_ENV],
             "--",
             go_toolchain.compiler_flags,
             compiler_flags,
-            "-buildid=",
             "-nolocalimports",
             "-pack",
             ["-trimpath", trimpath_spec(go_toolchain, go_srcs, pkg_import_path, cgo_gen_dir)],
@@ -518,6 +522,8 @@ def _compile(
         identifier = "{} [{}]".format(pkg_import_path, build_variant_id),
         error_handler = go_build_error_handler,
         allow_cache_upload = go_toolchain.allow_cache_upload,
+        metadata_env_var = ACTION_METADATA_ENV,
+        metadata_path = "{}_action_metadata.json".format(build_variant_id),
     )
 
     return (out_x, out_a, asmhdr)
