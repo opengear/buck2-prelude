@@ -90,8 +90,8 @@ _go_toolchain = rule(
         # Target-configured duals of `go_distr` and `go_wrapper` for the `go`
         # subtarget, which `buck2 run` executes on the invoking machine rather
         # than on the execution platform.
-        "run_go_distr": attrs.option(attrs.dep(providers = [GoDistrInfo])),
-        "run_go_wrapper": attrs.option(attrs.dep(providers = [RunInfo])),
+        "run_go_distr": attrs.option(attrs.dep(providers = [GoDistrInfo]), default = None),
+        "run_go_wrapper": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
         "tool_pack": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:tool_pack"),
     },
 )
