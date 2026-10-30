@@ -142,12 +142,13 @@ def link(
     final_output_name = ctx.label.name + file_extension
     output = ctx.actions.declare_output(ctx.label.name + "-tmp" + file_extension, has_content_based_path = True)
 
-    # Give internally-linked Go binaries a content-hash NT_GNU_BUILD_ID note.
-    # Buck has no artifact content at analysis time, so reserve a zeroed note here
-    # (-B 0x00..00) that the wrapper fills with sha256 post-link -- rewriting only a
-    # still-all-zero descriptor, so an external link keeps its C++-set build-id.
+    # Every ELF exe or pie link gets a content-hash NT_GNU_BUILD_ID note.
+    # Analysis cannot read the linked output. The link therefore reserves a
+    # zeroed 20-byte note (-B 0x00..00), and after the link the wrapper
+    # writes the output's sha256 into it. The wrapper rewrites only an
+    # all-zero descriptor and leaves alone one an external linker set.
     elf_go_os = ["linux", "android", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "solaris"]
-    emit_build_id = build_mode in [GoBuildMode("exe"), GoBuildMode("pie")] and link_mode in [None, "internal"] and go_toolchain.env_go_os in elf_go_os
+    emit_build_id = build_mode in [GoBuildMode("exe"), GoBuildMode("pie")] and go_toolchain.env_go_os in elf_go_os
 
     buildid_tool = go_toolchain.buildid
 
