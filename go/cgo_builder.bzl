@@ -82,6 +82,27 @@ _syscall_import_exclude_list = set([
     "runtime/msan",
 ])
 
+_CGoGenNames = record(
+    cgo_gotypes = field(str),
+    cgo_export_h = field(str),
+    cgo_export_c = field(str),
+    cgo1_go_files = field(list[str]),
+    cgo2_c_files = field(list[str]),
+)
+
+def _cgo_gen_names(cgo_srcs: list[Artifact]) -> _CGoGenNames:
+    """The names `cgo` writes under -objdir for cgo_srcs."""
+    return _CGoGenNames(
+        cgo_gotypes = "_cgo_gotypes.go",
+        cgo_export_h = "_cgo_export.h",
+        cgo_export_c = "_cgo_export.c",
+        cgo1_go_files = [paths.replace_extension(src.basename, ".cgo1.go") for src in cgo_srcs],
+        cgo2_c_files = [paths.replace_extension(src.basename, ".cgo2.c") for src in cgo_srcs],
+    )
+
+def _all_gen_names(names: _CGoGenNames) -> list[str]:
+    return [names.cgo_gotypes, names.cgo_export_h, names.cgo_export_c] + names.cgo1_go_files + names.cgo2_c_files
+
 def _cgo(
     actions: AnalysisActions,
     go_toolchain: GoToolchainInfo,
@@ -96,16 +117,20 @@ def _cgo(
     """
     Run `cgo` on `.go` sources to generate Go, C, and C-Header sources.
     """
-    gen_dir = actions.declare_output("cgo_gen_tmp", dir = True, has_content_based_path = True)
+    names = _cgo_gen_names(srcs)
 
-    # Return a `cmd_args` to use as the generated sources.
+    # cgo also writes `_cgo_<n>.o` and `_cgo_main.c` to its objdir. The
+    # object records a random temporary file name in its debug info, and
+    # `_cgo_main.c` feeds `cgo -dynimport`, which these rules do not run.
+    # Neither is an output.
+    outs = {name: actions.declare_output("cgo_objdir", name, has_content_based_path = True) for name in _all_gen_names(names)}
 
     unimport_runtime_cgo = standard and pkg_import_path == "runtime/cgo"
     unimport_syscall = standard and pkg_import_path in _syscall_import_exclude_list
 
     # //line paths are resolved by the Go compiler against gen_dir.
     trimpath_replaces = cmd_args(
-        [cmd_args(cmd_args(src, format = "%cwd%/{}"), cmd_args(src, relative_to = gen_dir), delimiter = "=>") for src in srcs],
+        [cmd_args(cmd_args(src, format = "%cwd%/{}"), cmd_args(src, relative_to = (outs[names.cgo_gotypes], 1)), delimiter = "=>") for src in srcs],
         delimiter = ";",
     )
 
@@ -113,7 +138,7 @@ def _cgo(
         go_toolchain.go_wrapper,
         ["--go", go_toolchain.cgo],
         "--",
-        cmd_args(gen_dir.as_output(), format = "-objdir={}"),
+        cmd_args(outs[names.cgo_gotypes].as_output(), parent = 1, format = "-objdir={}", hidden = [out.as_output() for out in outs.values()]),
         # todo: safe to remove once go1.28 is released
         ["-trimpath", trimpath_replaces if go_toolchain.version and go_toolchain.version.minor >= 27 else "%cwd%"],
         ["-import_runtime_cgo=false"] if unimport_runtime_cgo else [],
@@ -129,15 +154,18 @@ def _cgo(
 
     actions.run(cmd, env = env, category = "go_cgo", identifier = pkg_import_path, allow_cache_upload = go_toolchain.allow_cache_upload)
 
+    gen_dir = actions.copied_dir("cgo_gen_tmp", outs, has_content_based_path = True)
+
     return project_go_and_c_files(srcs, gen_dir), gen_dir
 
 def project_go_and_c_files(cgo_srcs: list[Artifact], gen_dir: Artifact) -> CGoToolOut:
+    names = _cgo_gen_names(cgo_srcs)
     return CGoToolOut(
-        cgo_gotypes = gen_dir.project("_cgo_gotypes.go"),
-        cgo_export_h = gen_dir.project("_cgo_export.h"),
-        cgo_export_c = gen_dir.project("_cgo_export.c"),
-        cgo1_go_files = [gen_dir.project(paths.replace_extension(src.basename, ".cgo1.go")) for src in cgo_srcs],
-        cgo2_c_files = [gen_dir.project(paths.replace_extension(src.basename, ".cgo2.c")) for src in cgo_srcs],
+        cgo_gotypes = gen_dir.project(names.cgo_gotypes),
+        cgo_export_h = gen_dir.project(names.cgo_export_h),
+        cgo_export_c = gen_dir.project(names.cgo_export_c),
+        cgo1_go_files = [gen_dir.project(name) for name in names.cgo1_go_files],
+        cgo2_c_files = [gen_dir.project(name) for name in names.cgo2_c_files],
     )
 
 def _cxx_wrapper(actions: AnalysisActions, go_toolchain: GoToolchainInfo, cgo_build_context: CGoBuildContext, own_pre: list[CPreprocessor]) -> cmd_args:
