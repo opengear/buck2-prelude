@@ -18,7 +18,7 @@ load(
 load(":go_list_stdlib.bzl", "go_list_stdlib", "parse_go_list_stdlib_out")
 load(":package_builder.bzl", "BuildPackageGoList", "BuildPackageParams", "build_package", "go_list_for_build")
 load(":packages.bzl", "GoPkg", "GoStdlib", "GoStdlibDynamicValue", "implicit_imports")
-load(":toolchain.bzl", "GoToolchainInfo", "evaluate_cgo_enabled")
+load(":toolchain.bzl", "GoToolchainInfo", "GoVersion", "evaluate_cgo_enabled", "parse_go_version_output")
 
 def go_stdlib_impl(ctx: AnalysisContext) -> list[Provider]:
     go_toolchain = ctx.attrs._go_toolchain[GoToolchainInfo]
@@ -35,6 +35,7 @@ def go_stdlib_impl(ctx: AnalysisContext) -> list[Provider]:
             go_list_stdlib_out = go_list_stdlib_out,
             target_label = ctx.label,
             go_toolchain = go_toolchain,
+            go_version_output = go_toolchain.version,
             cgo_build_context = get_cgo_build_context(ctx),
             pkgdir = pkgdir.as_output(),
         )
@@ -49,11 +50,14 @@ def _build_stdlib_impl(
     actions: AnalysisActions,
     target_label: Label,
     go_toolchain: GoToolchainInfo,
+    go_version_output: ArtifactValue,
     cgo_build_context: None | CGoBuildContext,
     go_list_stdlib_out: ArtifactValue,
     goroot: Artifact,
     pkgdir: OutputArtifact,
 ) -> list[Provider]:
+    go_version = parse_go_version_output(go_version_output.read_string())
+
     # First pass: parse all packages and collect their imports
     parsed_libs = {}  # import_path -> StdGoListOut
     for lib in go_list_stdlib_out.read_json():
@@ -96,6 +100,7 @@ def _build_stdlib_impl(
             actions = actions,
             target_label = target_label,
             go_toolchain = go_toolchain,
+            go_version = go_version,
             cgo_build_context = cgo_build_context,
             go_list = go_list_for_build(lib.go_list, False),
             params = BuildPackageParams(
@@ -129,6 +134,7 @@ _build_stdlib = dynamic_actions(
         "cgo_build_context": dynattrs.value(None | CGoBuildContext),
         "go_list_stdlib_out": dynattrs.artifact_value(),
         "go_toolchain": dynattrs.value(GoToolchainInfo),
+        "go_version_output": dynattrs.artifact_value(),
         "goroot": dynattrs.value(Artifact),
         "pkgdir": dynattrs.output(),
         "target_label": dynattrs.value(Label),
@@ -139,6 +145,7 @@ def _declare_stdlib_package_build(
     actions: AnalysisActions,
     target_label: Label,
     go_toolchain: GoToolchainInfo,
+    go_version: GoVersion | None,
     cgo_build_context: None | CGoBuildContext,
     go_list: BuildPackageGoList,
     params: BuildPackageParams,
@@ -153,6 +160,7 @@ def _declare_stdlib_package_build(
         _build_stdlib_package(
             target_label = target_label,
             go_toolchain = go_toolchain,
+            go_version = go_version,
             cgo_build_context = cgo_build_context,
             go_list = go_list,
             params = params,
@@ -175,6 +183,7 @@ def _build_stdlib_package_impl(
     actions: AnalysisActions,
     target_label: Label,
     go_toolchain: GoToolchainInfo,
+    go_version: GoVersion | None,
     cgo_build_context: None | CGoBuildContext,
     go_list: BuildPackageGoList,
     params: BuildPackageParams,
@@ -187,6 +196,7 @@ def _build_stdlib_package_impl(
         actions = actions,
         target_label = target_label,
         go_toolchain = go_toolchain,
+        go_version = go_version,
         cgo_build_context = cgo_build_context,
         go_list = go_list,
         params = params,
@@ -204,6 +214,7 @@ _build_stdlib_package = dynamic_actions(
         # Inputs
         "target_label": dynattrs.value(Label),
         "go_toolchain": dynattrs.value(GoToolchainInfo),
+        "go_version": dynattrs.value(GoVersion | None),
         "cgo_build_context": dynattrs.value(None | CGoBuildContext),
         "go_list": dynattrs.value(BuildPackageGoList),
         "params": dynattrs.value(BuildPackageParams),

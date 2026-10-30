@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//go:toolchain.bzl", "GoToolchainInfo")
+load("@prelude//go:toolchain.bzl", "GoToolchainInfo", "go_version_file")
 load("@prelude//os_lookup:defs.bzl", "ScriptLanguage")
 load("@prelude//utils:cmd_script.bzl", "cmd_script")
 
@@ -77,7 +77,7 @@ def _system_go_toolchain_impl(ctx):
             linker_flags = [],
             assembler_flags = [],
             compiler_flags = [],
-            version = None,  # we are unable to run `go version` during analysis time
+            version = go_version_file(ctx.actions, ctx.attrs.go_wrapper[RunInfo], RunInfo(go_root.project("bin/go" + suffix)), go_root, allow_cache_upload = ctx.attrs.allow_cache_upload),
         ),
     ]
 

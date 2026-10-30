@@ -12,7 +12,7 @@ load("@prelude//go:packages.bzl", "GoPackageInfo")
 load(
     "@prelude//go:toolchain.bzl",
     "GoToolchainInfo",
-    "GoVersion",  # @unused used as a type
+    "parse_go_version_output",
 )
 load("@prelude//utils:utils.bzl", "flatten")
 
@@ -83,7 +83,9 @@ def _driver(ctx):
 
     analysis_results = _analysis(ctx, unique_go_targets.values())
 
-    artifacts_to_build = []
+    go_toolchain_version = ctx.analysis(ctx.configured_targets("toolchains//:go")).providers()[GoToolchainInfo].version
+
+    artifacts_to_build = [go_toolchain_version]
     artifacts_to_ensure = []
 
     targets_data = {}
@@ -164,7 +166,7 @@ def _driver(ctx):
 
         packages += [{"Errors": [PackageError(Msg = error.message)], "ID": str(utarget.label)} for (utarget, error) in cquery_errors]
 
-        go_version = _go_version(ctx)
+        go_version = parse_go_version_output(artifacts[go_toolchain_version].read_string()) if build_results[go_toolchain_version].is_ok() else None
 
         ctx.bxl_actions().actions.write_json(
             outputs[dynamic_out],
@@ -180,7 +182,7 @@ def _driver(ctx):
     actions.dynamic_output(
         dynamic = [
             td.go_package_info.go_list_out for td in targets_data.values() if td.go_package_info and build_results[td.go_package_info.go_list_out].is_ok()
-        ],
+        ] + ([go_toolchain_version] if build_results[go_toolchain_version].is_ok() else []),
         inputs = [],
         outputs = [dynamic_out.as_output()],
         f = produce_result_json,
@@ -312,10 +314,6 @@ def _to_protocol_error(error: bxl.Error, expected_target: bxl.ConfiguredTargetNo
     # Question: Shall we do it in the Go part of the driver?
 
     return PackageError(Msg = msg)
-
-def _go_version(ctx: bxl.Context) -> GoVersion | None:
-    toolchain = ctx.analysis(ctx.configured_targets("toolchains//:go")).providers()[GoToolchainInfo]
-    return toolchain.version
 
 # https://github.com/golang/tools/blob/v0.23.0/go/packages/packages.go#L41-L42
 # The zero value is a special case, equivalent to combining

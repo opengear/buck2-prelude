@@ -18,7 +18,6 @@ GoDistrInfo = provider(
         "tool_cover": provider_field(RunInfo),
         "tool_cgo": provider_field(RunInfo),
         "tool_link": provider_field(RunInfo),
-        "version": provider_field(GoVersion | None),
     },
 )
 
@@ -54,7 +53,10 @@ GoToolchainInfo = provider(
         "asan": provider_field(bool, default = False),
         "race": provider_field(bool, default = False),
         "fuzz": provider_field(bool, default = False),
-        "version": provider_field(GoVersion | None),
+        # The output of `go version` for this toolchain's `go`. Parse it
+        # with parse_go_version_output inside a dynamic action or a BXL
+        # dynamic_output.
+        "version": provider_field(Artifact),
     },
 )
 
@@ -83,15 +85,15 @@ def evaluate_cgo_enabled(cgo_enabled: bool, override_cgo_enabled: bool | None = 
 # - "1.20"
 # - "1.22rc1" (for pre-release versions)
 # - "1.22.1" (for patch versions)
-# - "unknown" or "devel" (for development purposes)
+# - "devel" (for development purposes)
 def parse_go_version(version: str) -> GoVersion | None:
-    if version == "unknown" or version == "devel":
+    if version == "devel":
         return None
 
     version_parts = version.split(".")
 
     if len(version_parts) < 2 or len(version_parts) > 3:
-        fail("Invalid Go version: '{}'. Expected format '1.20', '1.22rc1', '1.22.1', 'devel' or 'unknown'.".format(version))
+        fail("Invalid Go version: '{}'. Expected format '1.20', '1.22rc1', '1.22.1' or 'devel'.".format(version))
 
     if version_parts[0] != "1":
         fail("Invalid Go version: '{}'. Expected major version to be '1'.".format(version))
@@ -114,3 +116,42 @@ def parse_go_version(version: str) -> GoVersion | None:
         patch = int(version_parts[2])
 
     return GoVersion(minor = minor, patch = patch)
+
+# Declares an action that runs `go version` and returns the artifact
+# holding its output. The release is readable only from that artifact's
+# content, because analysis cannot run a process.
+def go_version_file(actions: AnalysisActions, go_wrapper: RunInfo, go: RunInfo, go_root: Artifact, allow_cache_upload: bool | None) -> Artifact:
+    output = actions.declare_output("go_version.txt", has_content_based_path = True)
+    actions.run(
+        cmd_args(go_wrapper, ["--go", go], ["--output", output.as_output()], "--", "version"),
+        env = {
+            # `go` is a projection of `bin/go`, and Buck2 gives an action only
+            # the projected path of a projected artifact. The sandbox then
+            # lacks GOROOT's `pkg/tool`, and `go` cannot locate its root from
+            # its own path (findGOROOT in cmd/go/internal/cfg). Setting
+            # GOROOT points `go` at the tree.
+            "GOROOT": go_root,
+            # GOTOOLCHAIN=local keeps `go` on this tree when a go.mod in the
+            # working directory names a newer release. GOENV=off keeps the user's
+            # `go env -w` file, which can set GOTOOLCHAIN and GOFLAGS, out of the
+            # run.
+            "GOENV": "off",
+            "GOTOOLCHAIN": "local",
+        },
+        category = "go_version",
+        allow_cache_upload = allow_cache_upload,
+    )
+    return output
+
+# `go version` prints `go version go<release> <goos>/<goarch>`, or `go
+# version devel ...` for a development build. Parses that first line and
+# returns the release, or `None` for a development build.
+def parse_go_version_output(output: str) -> GoVersion | None:
+    first_line = output.splitlines()[0] if output else ""
+    parts = first_line.split()
+    if len(parts) >= 3 and parts[0] == "go" and parts[1] == "version":
+        if parts[2] == "devel":
+            return None
+        if parts[2].startswith("go"):
+            return parse_go_version(parts[2].removeprefix("go"))
+    fail("Parsing `go version` output: first line '{}' lacks the form 'go version go<release>' or 'go version devel'".format(first_line))
