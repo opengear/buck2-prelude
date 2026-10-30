@@ -58,6 +58,7 @@ def go_bootstrap_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         "CGO_ENABLED": "0",
         "GO111MODULE": "",
         "GOARCH": go_toolchain.env_go_arch,
+        "GOENV": "off",
         "GOOS": go_toolchain.env_go_os,
         "GOTOOLCHAIN": "local",
     }

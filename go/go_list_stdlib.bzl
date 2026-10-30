@@ -19,6 +19,8 @@ def go_list_stdlib(actions: AnalysisActions, go_toolchain: GoToolchainInfo, cgo_
     env["GOROOT"] = cmd_args(go_toolchain.env_go_root.project("src"), parent = 1)
 
     env["CGO_ENABLED"] = "1" if cgo_enabled else "0"
+    env["GOENV"] = "off"
+    env["GOTOOLCHAIN"] = "local"
 
     go_list_stdlib_out = actions.declare_output("go_list_stdlib.txt", has_content_based_path = True)
     go_list_args = [
