@@ -63,7 +63,7 @@ func main() {
 	var defaultGoArch = flag.String("default-goarch", "", "default GOARCH (if not set by env)")
 	var outputFile = flag.String("output", "", "file to redirect stdout to")
 	var convertJsonStream = flag.Bool("convert-json-stream", false, "convert json stream to array")
-	var gnuBuildID = flag.Bool("gnu-build-id", false, "rewrite .note.gnu.build-id with sha256 of the linked output (internal Go links only)")
+	var gnuBuildID = flag.Bool("gnu-build-id", false, "rewrite a zeroed .note.gnu.build-id in the linked output with the sha256 of that output")
 	var actionIDEnv = flag.String("action-id-env", "", "environment variable that holds the path of Buck2's action metadata. The wrapper passes the tool a -buildid. Its action ID is a hash of the metadata's input digests, the tool's arguments, the Go build variables and the --hash-env variables")
 	var buildIDTool = flag.String("buildid-tool", "", "path of the cmd/buildid binary; --main-export and --write-content-id run it")
 	var mainExport = flag.String("main-export", "", "export file of the main package in a link; the link's -buildid puts that file's build ID between two copies of the link's action ID")

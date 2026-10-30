@@ -84,13 +84,14 @@ func outputPath(args []string) string {
 }
 
 // setGNUBuildID fills the zeroed .note.gnu.build-id placeholder ("-B 0x00..00")
-// of an internally linked Go binary with sha256 of the output. The write is in
+// of an ELF exe or pie Go binary with sha256 of the output. The write is in
 // place and same-size, so the note stays in its runtime-visible PT_NOTE segment.
 //
-// Only a still-all-zero descriptor is rewritten: a non-zero one means an external
-// linker owns the build-id and must not be clobbered. A non-ELF output, a missing
-// note, or an externally-owned descriptor is a no-op; unreadable/corrupt output
-// or a short write aborts the link, so a half-written descriptor never ships.
+// Only a still-all-zero descriptor is rewritten: a non-zero one was written by
+// an external linker and must not be clobbered. A non-ELF output, a missing
+// note, or a descriptor an external linker wrote is a no-op; unreadable/corrupt
+// output or a short write aborts the link, so a half-written descriptor never
+// ships.
 func setGNUBuildID(path string) error {
 	descOff, descLen, err := findBuildIDNote(path)
 	if err != nil || descOff == 0 {
