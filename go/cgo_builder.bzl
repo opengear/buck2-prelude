@@ -139,6 +139,7 @@ def _cgo(
         ["--go", go_toolchain.cgo],
         "--",
         cmd_args(outs[names.cgo_gotypes].as_output(), parent = 1, format = "-objdir={}", hidden = [out.as_output() for out in outs.values()]),
+        ["-importpath", pkg_import_path],
         # todo: safe to remove once go1.28 is released
         ["-trimpath", trimpath_replaces if go_toolchain.version and go_toolchain.version.minor >= 27 else "%cwd%"],
         ["-import_runtime_cgo=false"] if unimport_runtime_cgo else [],
