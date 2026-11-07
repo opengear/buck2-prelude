@@ -30,7 +30,8 @@ def main(argv: list[str]) -> None:
         exclude = re.compile(args.exclude)
 
     entries = []
-    for root, dirs, files in os.walk(args.extracted):
+    # A source dir can be a tree of symlinks to directories.
+    for root, dirs, files in os.walk(args.extracted, followlinks=True):
         # Ensure a consistent iteration order.
         # Sorting dirs in place affects the future iteration
         # order of os.walk.

@@ -141,7 +141,8 @@ def main() -> None:
     # Infer C++ header dirs.
     if args.cxx_header_dirs is not None:
         with open(args.cxx_header_dirs, mode="w") as f:
-            for root, dirs, _files in os.walk(source_root):
+            # A source dir can be a tree of symlinks to directories.
+            for root, dirs, _files in os.walk(source_root, followlinks=True):
                 root = os.path.relpath(root, source_root)
                 if "include" in dirs:
                     print(os.path.normpath(os.path.join(root, "include")), file=f)
