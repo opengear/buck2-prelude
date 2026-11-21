@@ -23,7 +23,13 @@ load(":go_error_handler.bzl", "go_build_error_handler")
 load(":go_list.bzl", "GoListDynamicValue", "GoListOut", "go_list")
 load(":package_root.bzl", "strip_package_root")
 load(":packages.bzl", "GoPackageInfo", "GoPkg", "GoStdlib", "GoStdlibDynamicValue", "implicit_imports", "make_compile_importcfg", "merge_pkgs")
-load(":toolchain.bzl", "GoToolchainInfo", "get_toolchain_env_vars")
+load(
+    ":toolchain.bzl",
+    "GoToolchainInfo",
+    "GoVersion",  # @Unused used as type
+    "get_toolchain_env_vars",
+    "parse_go_version_output",
+)
 
 GoBuildConfig = record(
     compiler_flags = field(list[str], []),
@@ -97,6 +103,7 @@ def declare_package_build(
             config = config,
             deps_pkgs = all_pkgs,
             go_toolchain = go_toolchain,
+            go_version_output = go_toolchain.version,
             go_stdlib_value = go_stdlib.dynamic_value,
             go_list_value = go_list_value,
             cgo_gen_dir = cgo_gen_dir.as_output(),
@@ -136,6 +143,7 @@ def _build_package_action_impl(
     config: GoBuildConfig,
     deps_pkgs: dict[str, GoPkg],
     go_toolchain: GoToolchainInfo,
+    go_version_output: ArtifactValue,
     go_list_value: ResolvedDynamicValue,
     go_stdlib_value: ResolvedDynamicValue,
     cgo_gen_dir: OutputArtifact,
@@ -155,10 +163,13 @@ def _build_package_action_impl(
 
     go_stdlib_value = go_stdlib_value.providers[GoStdlibDynamicValue]
 
+    go_version = parse_go_version_output(go_version_output.read_string())
+
     result = build_package(
         actions = actions,
         target_label = target_label,
         go_toolchain = go_toolchain,
+        go_version = go_version,
         cgo_build_context = cgo_build_context,
         go_list = go_list_for_build(go_list, config.with_tests),
         params = BuildPackageParams(
@@ -201,6 +212,8 @@ _build_package_action = dynamic_actions(
         "config": dynattrs.value(GoBuildConfig),
         "deps_pkgs": dynattrs.value(dict[str, GoPkg]),
         "go_toolchain": dynattrs.value(GoToolchainInfo),
+        # Readable Artifacts
+        "go_version_output": dynattrs.artifact_value(),
         # Dynamic Values
         "go_list_value": dynattrs.dynamic_value(),  # GoListDynamicValue
         "go_stdlib_value": dynattrs.dynamic_value(),  # GoStdlibDynamicValue
@@ -292,6 +305,7 @@ def build_package(
     actions: AnalysisActions,
     target_label: Label,
     go_toolchain: GoToolchainInfo,
+    go_version: GoVersion | None,
     cgo_build_context: CGoBuildContext | None,
     go_list: BuildPackageGoList,
     params: BuildPackageParams,
@@ -344,7 +358,7 @@ def build_package(
         anon_targets_allowed = False,
     )
 
-    symabis = _symabis(actions, go_toolchain, params.pkg_import_path, params.main, params.standard, s_files, go_list.h_files, params.assembler_flags)
+    symabis = _symabis(actions, go_toolchain, params.pkg_import_path, params.main, params.standard, go_version, s_files, go_list.h_files, params.assembler_flags)
 
     embedcfg = _embedcfg(actions, go_toolchain, params.pkg_import_path, params.package_root, params.embed_srcs, go_list.embed_patterns)
 
@@ -402,7 +416,7 @@ def build_package(
         )
 
         asm_o_files = _asssembly(
-            actions, go_toolchain, params.pkg_import_path, params.main, params.standard, s_files, go_list.h_files, asmhdr, params.assembler_flags, shared, build_variant_id
+            actions, go_toolchain, params.pkg_import_path, params.main, params.standard, go_version, s_files, go_list.h_files, asmhdr, params.assembler_flags, shared, build_variant_id
         )
 
         return go_x_file, _pack(actions, go_toolchain, params.pkg_import_path, go_a_file, cgo_o_files + asm_o_files + go_list.syso_files, build_variant_id)
@@ -513,6 +527,7 @@ def _symabis(
     pkg_import_path: str,
     main: bool,
     standard: bool,
+    go_version: GoVersion | None,
     s_files: list[Artifact],
     h_files: list[Artifact],
     assembler_flags: list[str],
@@ -533,7 +548,7 @@ def _symabis(
         "--",
         go_toolchain.assembler_flags,
         assembler_flags,
-        _asm_args(go_toolchain, pkg_import_path, main, False, standard),  # flag -shared doesn't matter for symabis
+        _asm_args(go_toolchain, pkg_import_path, main, False, standard, go_version),  # flag -shared doesn't matter for symabis
         "-gensymabis",
         ["-o", symabis.as_output()],
         ["-I", cmd_args(fake_asmhdr, parent = 1)],
@@ -553,6 +568,7 @@ def _asssembly(
     pkg_import_path: str,
     main: bool,
     standard: bool,
+    go_version: GoVersion | None,
     s_files: list[Artifact],
     h_files: list[Artifact],
     asmhdr: Artifact | None,
@@ -577,7 +593,7 @@ def _asssembly(
             "--",
             go_toolchain.assembler_flags,
             assembler_flags,
-            _asm_args(go_toolchain, pkg_import_path, main, shared, standard),
+            _asm_args(go_toolchain, pkg_import_path, main, shared, standard, go_version),
             ["-o", o_file.as_output()],
             ["-I", cmd_args(asmhdr, parent = 1)] if asmhdr else [],  # can it actually be None?
             [cmd_args(h_files, parent = 1, prepend = "-I")] if h_files else [],
@@ -650,12 +666,12 @@ def _embedcfg(
 
     return embedcfg.with_associated_artifacts([srcs_dir])
 
-def _asm_args(go_toolchain: GoToolchainInfo, pkg_import_path: str, main: bool, shared: bool, standard: bool):
+def _asm_args(go_toolchain: GoToolchainInfo, pkg_import_path: str, main: bool, shared: bool, standard: bool, go_version: GoVersion | None):
     return [
         ["-p", "main" if main else pkg_import_path],
         ["-I", go_toolchain.env_go_root.project("pkg/include")] if go_toolchain.env_go_root else [],
         ["-D", "GOOS_" + go_toolchain.env_go_os] if go_toolchain.env_go_os else [],
         ["-D", "GOARCH_" + go_toolchain.env_go_arch] if go_toolchain.env_go_arch else [],
         ["-shared"] if shared else [],
-        ["-std"] if standard and go_toolchain.version and go_toolchain.version.minor >= 27 else [],  # todo: safe to remove once go1.28 is released
+        ["-std"] if standard and go_version and go_version.minor >= 27 else [],  # todo: safe to remove once go1.28 is released
     ]

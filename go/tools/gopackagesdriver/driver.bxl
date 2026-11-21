@@ -10,7 +10,12 @@ load("@prelude//bxl:lazy.bxl", "catch_resolve_lazy_dict", "partition_results_dic
 load("@prelude//go:cgo_builder.bzl", "project_go_and_c_files")
 load("@prelude//go:go_list.bzl", "GoListDynamicValue", "GoListOut")
 load("@prelude//go:packages.bzl", "GoPackageInfo")
-load("@prelude//go:toolchain.bzl", "GoToolchainInfo")
+load(
+    "@prelude//go:toolchain.bzl",
+    "GoToolchainInfo",
+    "GoVersion",  # @unused used as a type
+    "parse_go_version_output",
+)
 load("@prelude//utils:utils.bzl", "flatten")
 
 def _go_kind(need_tests: bool) -> str:
@@ -75,6 +80,8 @@ def _driver(ctx):
     )
     errors.extend([{"Errors": [PackageError(Msg = error.message)], "ID": id} for id, error in analysis_errors.items()])
 
+    go_toolchain_version = ctx.analysis(ctx.configured_targets("toolchains//:go")).providers()[GoToolchainInfo].version
+
     artifacts_to_ensure = []
 
     targets_data = {}
@@ -102,6 +109,7 @@ def _driver(ctx):
 
     lazies = {td.go_package_info.go_list_value: ctx.lazy.resolve_dynamic_value(td.go_package_info.go_list_value) for td in targets_data.values()}
     lazies |= {artifact: ctx.lazy.build_artifact(artifact) for artifact in artifacts_to_ensure}
+    lazies[go_toolchain_version] = ctx.lazy.build_artifact(go_toolchain_version)
     values, failures = partition_results_dict(catch_resolve_lazy_dict(ctx, lazies))
 
     # Materialize the only artifacts we were able to build to avoid script execution failure
@@ -127,17 +135,36 @@ def _driver(ctx):
 
     actions = ctx.bxl_actions().actions
     output = actions.declare_output("dynamic_out.json", has_content_based_path = False)
-    go_version = ctx.analysis(ctx.configured_targets("toolchains//:go")).providers()[GoToolchainInfo].version
-    actions.write_json(
-        output,
-        {
-            "GoVersion": go_version.minor if go_version else 0,
-            "Packages": packages + errors,
-            "Roots": [str(t.label) for t in go_root_targets],
-        },
-        pretty = True,
-        absolute = True,
-    )
+    roots = [str(t.label) for t in go_root_targets]
+
+    def write_result_json(actions, out, go_version: GoVersion | None):
+        actions.write_json(
+            out,
+            {
+                "GoVersion": go_version.minor if go_version else 0,
+                "Packages": packages + errors,
+                "Roots": roots,
+            },
+            pretty = True,
+            absolute = True,
+        )
+
+    if go_toolchain_version in values:
+        # The toolchain's release is readable only from its `go version`
+        # output, and BXL reads an artifact's content only inside a
+        # dynamic output.
+        def produce_result_json(ctx, artifacts, outputs):
+            go_version = parse_go_version_output(artifacts[go_toolchain_version].read_string())
+            write_result_json(ctx.bxl_actions().actions, outputs[output], go_version)
+
+        actions.dynamic_output(
+            dynamic = [go_toolchain_version],
+            inputs = [],
+            outputs = [output.as_output()],
+            f = produce_result_json,
+        )
+    else:
+        write_result_json(actions, output, None)
     ctx.output.print(ctx.output.ensure(output).abs_path())
 
 def _make_protocol_package(
